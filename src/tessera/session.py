@@ -28,14 +28,15 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
 from tessera.classification import ToolProfile, classify_tool
+from tessera.declassify import Declassifier
 from tessera.labels import Origin, TrustLevel, combine
 from tessera.ledger import Ledger, open_ledger
 from tessera.policy import Decision, PolicyEngine, PolicyResult, Strictness
-from tessera.provenance import LabeledValue, ProvenanceGraph
+from tessera.provenance import LabeledValue, Origin as _Origin, ProvenanceNode, ProvenanceGraph
 from tessera.sanitize import sanitize_markdown
 
 # Minimum length of a token we consider "significant" enough to track for

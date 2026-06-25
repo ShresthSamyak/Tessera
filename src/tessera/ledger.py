@@ -133,6 +133,25 @@ class Ledger:
     def sanitize(self, tool: str, removed: list[str]) -> LedgerEntry:
         return self.record("sanitize", tool=tool, removed=removed)
 
+    def declassify(
+        self,
+        tool: str,
+        arg: str,
+        declassifier: str,
+        accepted: bool,
+        reason: str,
+        constraint: str = "",
+    ) -> LedgerEntry:
+        return self.record(
+            "declassify",
+            tool=tool,
+            arg=arg,
+            declassifier=declassifier,
+            accepted=accepted,
+            reason=reason,
+            constraint=constraint,
+        )
+
 
 def open_ledger(path: str | None = None, session_id: str = "default") -> Ledger:
     """Open a ledger backed by a file (or memory if ``path`` is None)."""

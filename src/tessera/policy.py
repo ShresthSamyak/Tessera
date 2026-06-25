@@ -70,6 +70,9 @@ class PolicyResult:
     reason: str
     #: Human-readable provenance summary, for the ledger and HITL prompt.
     provenance: tuple[str, ...] = field(default_factory=tuple)
+    #: If a declassifier canonicalized any arguments, the substitutions to
+    #: forward upstream (arg name -> cleaned value). None when nothing changed.
+    cleaned_arguments: dict | None = None
 
     @property
     def allowed(self) -> bool:
