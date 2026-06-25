@@ -21,6 +21,18 @@ Every label, decision, and escalation is written to an append-only audit
 ledger (:mod:`tessera.ledger`).
 """
 
+from tessera.capabilities import (
+    Capability,
+    CapabilityEngine,
+    CapabilityResult,
+    Caveat,
+    arg_equals,
+    arg_in,
+    arg_matches,
+    expires_at,
+    max_uses,
+    tool_is,
+)
 from tessera.classification import (
     BlastRadius,
     Reversibility,

@@ -31,7 +31,7 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
-from tessera.capabilities import Capability, CapabilityEngine
+from tessera.capabilities import Capability, CapabilityEngine, CapabilityResult
 from tessera.classification import ToolProfile, classify_tool
 from tessera.declassify import Declassifier
 from tessera.labels import Origin, TrustLevel, combine
@@ -123,6 +123,15 @@ class Session:
         bottleneck through which tainted data may reach a dangerous tool.
         """
         self.declassifiers[(tool, arg)] = declassifier
+
+    def grant(self, capability: Capability) -> None:
+        """Add a capability to the session's held set (least authority).
+
+        Capabilities are minted by the trusted control plane and granted here;
+        when ``require_capabilities`` is on, a gated call is authorized only if
+        one held capability covers it.
+        """
+        self._granted.append(capability)
 
     def register_tools_from_schema(self, tools: list[Mapping[str, Any]]) -> None:
         """Auto-classify a list of MCP tool descriptors (from tools/list)."""
@@ -288,6 +297,27 @@ class Session:
         cleaned_args = cleaned if (cleaned and is_mapping) else None
         return TrustLevel.UNTRUSTED, provenance, True, cleaned_args
 
+    def _capability_required(self, profile: ToolProfile) -> bool:
+        if not (self.require_capabilities and self.capability_engine is not None):
+            return False
+        return self.capabilities_cover_all or profile.is_dangerous
+
+    def _check_capability(
+        self, tool: str, args: Mapping[str, Any] | Any
+    ) -> CapabilityResult:
+        """Find a granted capability that authorizes this call (least authority)."""
+        engine = self.capability_engine
+        assert engine is not None
+        call_args = args if isinstance(args, Mapping) else {}
+        last_reason = "no capability has been granted for this session"
+        for cap in self._granted:
+            res = engine.verify(cap, tool, call_args)
+            if res.authorized:
+                engine.consume(cap)  # spend exactly the capability we used
+                return res
+            last_reason = res.reason
+        return CapabilityResult(False, last_reason)
+
     def authorize_call(
         self,
         tool: str,
@@ -295,7 +325,14 @@ class Session:
         *,
         declassified: bool = False,
     ) -> PolicyResult:
-        """Evaluate a proposed tool call against the flow rule and record it.
+        """Evaluate a proposed tool call and record the decision.
+
+        Two independent gates must both pass for a dangerous call:
+
+          1. **least authority** — if capabilities are required, a granted
+             capability must authorize this exact (tool, args); and
+          2. **the flow rule** — untrusted data must not drive the tool unless
+             declassified or human-approved.
 
         Untrusted arguments are routed through any registered declassifiers
         first; ``declassified`` may also be forced True by a caller that has
@@ -303,6 +340,29 @@ class Session:
         """
         profile = self._profile_for(tool)
         arg_level, provenance, auto_declassified, cleaned = self._evaluate_arguments(tool, args)
+
+        # Gate 1: least authority. A missing/insufficient capability is a hard
+        # block — ambient authority is exactly what we are removing.
+        if self._capability_required(profile):
+            cap_res = self._check_capability(tool, args)
+            if self.ledger:
+                self.ledger.capability(
+                    tool, cap_res.authorized, cap_res.reason, cap_res.capability_id
+                )
+            if not cap_res.authorized:
+                result = PolicyResult(
+                    decision=Decision.BLOCK,
+                    tool=tool,
+                    arg_level=arg_level,
+                    profile=profile,
+                    reason=f"no capability authorizes this call: {cap_res.reason}",
+                    provenance=tuple(provenance),
+                )
+                if self.ledger:
+                    self.ledger.decision(result)
+                return result
+
+        # Gate 2: the provenance flow rule.
         result = self.policy.evaluate(
             profile,
             arg_level,
