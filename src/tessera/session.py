@@ -189,10 +189,12 @@ class Session:
                 ]
             return TrustLevel.TRUSTED, ["no untrusted data in session"]
 
-        # Value-flow matching: do the args share any significant token with
-        # untrusted material we've seen?
-        arg_tokens = _significant_tokens(_stringify(args))
-        hits = sorted(self._tainted_tokens & arg_tokens)
+        # Value-flow matching: does any untrusted fragment we've seen appear
+        # inside the argument text? Tainted tokens are punctuation-trimmed and
+        # >= _MIN_TOKEN_LEN, so a substring test catches both a verbatim secret
+        # and one embedded like ``key=<secret>`` without matching short noise.
+        arg_text = _stringify(args)
+        hits = sorted(tok for tok in self._tainted_tokens if tok in arg_text)
         if hits:
             shown = ", ".join(hits[:3]) + (" …" if len(hits) > 3 else "")
             return TrustLevel.UNTRUSTED, [
