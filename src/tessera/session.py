@@ -31,6 +31,7 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
+from tessera.capabilities import Capability, CapabilityEngine
 from tessera.classification import ToolProfile, classify_tool
 from tessera.declassify import Declassifier
 from tessera.labels import Origin, TrustLevel, combine
@@ -84,6 +85,15 @@ class Session:
     #: plane decides which arguments may pass untrusted data through a membrane.
     declassifiers: dict[tuple[str, str], Declassifier] = field(default_factory=dict)
 
+    #: Optional capability engine. When set with ``require_capabilities``, every
+    #: gated tool call must be authorized by a granted capability (least
+    #: authority), independently of the provenance flow rule.
+    capability_engine: CapabilityEngine | None = None
+    #: If True, calls to dangerous tools require a granted capability. If
+    #: ``capabilities_cover_all`` is also True, *every* tool does.
+    require_capabilities: bool = False
+    capabilities_cover_all: bool = False
+
     # --- internal state ---
     profiles: dict[str, ToolProfile] = field(default_factory=dict)
     graph: ProvenanceGraph = field(default_factory=ProvenanceGraph)
@@ -91,6 +101,8 @@ class Session:
     context_level: TrustLevel = TrustLevel.TRUSTED
     #: Significant tokens seen in untrusted results, for value-flow matching.
     _tainted_tokens: set[str] = field(default_factory=set)
+    #: Capabilities granted to this session (the held set the proxy enforces).
+    _granted: list[Capability] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.ledger is None:

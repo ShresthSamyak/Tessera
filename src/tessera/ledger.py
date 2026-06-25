@@ -152,6 +152,21 @@ class Ledger:
             constraint=constraint,
         )
 
+    def capability(
+        self,
+        tool: str,
+        authorized: bool,
+        reason: str,
+        capability_id: str | None = None,
+    ) -> LedgerEntry:
+        return self.record(
+            "capability",
+            tool=tool,
+            authorized=authorized,
+            reason=reason,
+            capability_id=capability_id,
+        )
+
 
 def open_ledger(path: str | None = None, session_id: str = "default") -> Ledger:
     """Open a ledger backed by a file (or memory if ``path`` is None)."""
