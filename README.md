@@ -196,6 +196,44 @@ laundering too, at the cost of over-tainting benign work. Choosing between them
 v0.3 declassifier exists to relieve. Next step for credibility: run the same
 defense on [AgentDojo](https://github.com/ethz-spylab/agentdojo).
 
+## The plan interpreter (containment by construction)
+
+The strongest form of the defense (after Google DeepMind's
+[CaMeL](https://arxiv.org/abs/2503.18813)): emit the plan **once, from the
+trusted user query, before any untrusted data is seen**, as a small program in a
+constrained interpreter. Untrusted tool results then flow through that fixed
+program only as typed, labeled values -- they fill slots but can never change
+which steps run.
+
+```python
+from tessera import Session, PolicyEngine, Strictness
+from tessera.plan import PlanInterpreter, plan, step, call, const, var
+
+session = Session(policy=PolicyEngine(Strictness.PARANOID))
+interp = PlanInterpreter(session, my_tool_backend)
+
+interp.run(plan(
+    step(call("read_doc", doc_id=const("q3")), bind="doc"),
+    step(call("send_email", to=const("me@co"), body=const("Standup at 10am"))),
+))
+```
+
+Two guarantees, both stronger than heuristic taint tracking:
+
+1. **Structural containment** -- the set of tool calls is exactly the plan's
+   steps, so an injection in `doc` cannot add a "send the secret to the
+   attacker" step that the user never planned.
+2. **Precise provenance, no over-tainting** -- every value's label is known
+   exactly, so the flow rule fires only on arguments that *actually* carry
+   untrusted data. The constant reminder above is **allowed even after reading an
+   untrusted doc**, where the token heuristic would over-block it -- *same
+   containment, lower tax*. Feed the doc's content into the email body instead
+   and the flow rule blocks it precisely. See `python examples/plan_demo.py`.
+
+Capabilities are **auto-derived from the plan**: each dangerous step with
+constant arguments gets a capability scoped to exactly those values, so least
+authority falls out of the plan for free.
+
 ## Run inside AgentDojo
 
 [AgentDojo](https://github.com/ethz-spylab/agentdojo) is the standard
