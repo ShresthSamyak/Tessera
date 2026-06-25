@@ -141,3 +141,24 @@ def test_plan_mode_still_taxes_genuine_untrusted_into_exfil():
 def test_every_planned_scenario_runs(scenario):
     res = run_scenario_plan(scenario)
     assert res.scenario_id == scenario.id
+
+
+def test_value_corruption_contained_via_flow_rule_not_structure():
+    # The hardening case: the dangerous send IS a planned step (not added by the
+    # injection), yet plan mode contains it because the recipient is untrusted.
+    # This proves plan mode's containment isn't purely structural.
+    from tessera.eval.harness import _PlanBackend
+    from tessera.plan import PlanInterpreter
+    from tessera.policy import Decision, PolicyEngine
+    from tessera.session import Session
+
+    scenario = next(s for s in CATALOG if s.id == "value-corruption-reply")
+    backend = _PlanBackend(scenario)
+    session = Session(policy=PolicyEngine(Strictness.PARANOID))
+    session.register_tools_from_schema(scenario.tools)
+    run = PlanInterpreter(session, backend, auto_capabilities=False).run(scenario.plan)
+
+    send = next(o for o in run.outcomes if o.tool == "send_email")
+    assert send.tool == "send_email"  # it really is a step in the plan
+    assert send.decision.decision is Decision.BLOCK  # blocked by the flow rule
+    assert _by_id(evaluate_plan_point())["value-corruption-reply"].success is True
