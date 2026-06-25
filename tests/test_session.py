@@ -121,15 +121,20 @@ def test_declassifier_only_clears_when_all_tainted_args_pass():
     assert r.decision is not Decision.ALLOW
 
 
-def test_enum_declassifier_allows_dangerous_call():
+def test_enum_declassifier_allows_dangerous_call_value_flow():
+    # Enum value long enough to be a tracked taint token, so value-flow flags
+    # it and the enum declassifier must clear it.
     s = _session(Strictness.BALANCED)
     s.register_tool(classify_tool("read_doc", {"properties": {"doc_id": {}}}))
     s.register_tool(operator_profile(
-        "set_alert", reversibility=Reversibility.IRREVERSIBLE, exfiltration_capable=False))
-    s.register_declassifier("set_alert", "level", EnumDeclassifier("lvl", ["low", "high"]))
-    s.ingest_result("read_doc", "the document says priority is high for this")
-    r = s.authorize_call("set_alert", {"level": "high"})
+        "set_status", reversibility=Reversibility.IRREVERSIBLE, exfiltration_capable=False))
+    s.register_declassifier(
+        "set_status", "status",
+        EnumDeclassifier("st", ["approved", "rejected", "pending_review"]))
+    s.ingest_result("read_doc", "The vendor wants this marked pending_review today.")
+    r = s.authorize_call("set_status", {"status": "pending_review"})
     assert r.decision is Decision.ALLOW
+    assert r.cleaned_arguments == {"status": "pending_review"}
 
 
 def test_declassifier_clears_arg_even_in_paranoid():
