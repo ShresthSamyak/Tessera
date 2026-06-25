@@ -51,6 +51,21 @@ from tessera.declassify import (
     PatternDeclassifier,
 )
 from tessera.labels import Origin, TrustLevel
+from tessera.plan import (
+    Call,
+    Const,
+    Field,
+    Plan,
+    PlanInterpreter,
+    PlanRun,
+    Step,
+    Var,
+    call,
+    const,
+    plan,
+    step,
+    var,
+)
 from tessera.policy import Decision, PolicyEngine, PolicyResult, Strictness
 from tessera.provenance import LabeledValue, ProvenanceNode
 from tessera.session import Session

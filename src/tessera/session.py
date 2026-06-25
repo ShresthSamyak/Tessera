@@ -244,23 +244,26 @@ class Session:
         return tainted
 
     def _evaluate_arguments(
-        self, tool: str, args: Mapping[str, Any] | Any
+        self,
+        tool: str,
+        raw_args: Mapping[str, Any],
+        tainted: dict[str, list[str]],
     ) -> tuple[TrustLevel, list[str], bool, dict | None]:
         """Resolve a call's argument trust level, applying any declassifiers.
 
-        Returns ``(arg_level, provenance, declassified, cleaned_args)`` where
-        ``declassified`` is True iff every tainted argument was cleared by a
-        declassifier, and ``cleaned_args`` carries the canonicalized
-        substitutions to forward upstream (or None if nothing changed).
+        ``raw_args`` maps argument name -> raw value (used as declassifier input
+        and for provenance). ``tainted`` is the precomputed set of arguments
+        carrying untrusted material (from the token heuristic in
+        :meth:`authorize_call`, or from precise labels in
+        :meth:`authorize_call_labeled`). Returns
+        ``(arg_level, provenance, declassified, cleaned_args)``.
         """
-        tainted = self._tainted_args(args)
         if not tainted:
             return TrustLevel.TRUSTED, ["arguments contain no tracked untrusted material"], False, None
 
         provenance: list[str] = []
         cleaned: dict[str, Any] = {}
         remaining: list[str] = []
-        is_mapping = isinstance(args, Mapping)
 
         for name, hits in tainted.items():
             declassifier = self.declassifiers.get((tool, name))
@@ -270,8 +273,7 @@ class Session:
                 remaining.append(name)
                 provenance.append(f"{arg_label} carries untrusted material ({shown})")
                 continue
-            raw = _stringify(args[name]) if is_mapping else _stringify(args)
-            outcome = declassifier.apply(raw)
+            outcome = declassifier.apply(_stringify(raw_args.get(name)))
             if self.ledger:
                 self.ledger.declassify(
                     tool, arg_label, declassifier.name, outcome.accepted,
@@ -293,8 +295,9 @@ class Session:
             # At least one tainted argument could not be cleared.
             return TrustLevel.UNTRUSTED, provenance, False, None
 
-        # Every tainted argument passed a declassifier.
-        cleaned_args = cleaned if (cleaned and is_mapping) else None
+        # Every tainted argument passed a declassifier. Only real (named)
+        # substitutions can be forwarded downstream.
+        cleaned_args = {k: v for k, v in cleaned.items() if k} or None
         return TrustLevel.UNTRUSTED, provenance, True, cleaned_args
 
     def _capability_required(self, profile: ToolProfile) -> bool:
@@ -339,12 +342,64 @@ class Session:
         already cleared the data out of band.
         """
         profile = self._profile_for(tool)
-        arg_level, provenance, auto_declassified, cleaned = self._evaluate_arguments(tool, args)
+        raw_args = args if isinstance(args, Mapping) else {"": args}
+        tainted = self._tainted_args(args)
+        arg_level, provenance, auto_declassified, cleaned = self._evaluate_arguments(
+            tool, raw_args, tainted
+        )
+        capability_args = args if isinstance(args, Mapping) else {}
+        return self._finalize_decision(
+            tool, profile, capability_args, arg_level, provenance,
+            declassified or auto_declassified, cleaned,
+        )
 
+    def authorize_call_labeled(
+        self,
+        tool: str,
+        labeled_args: Mapping[str, LabeledValue],
+        *,
+        declassified: bool = False,
+    ) -> PolicyResult:
+        """Authorize a call using *precise* per-argument provenance.
+
+        Unlike :meth:`authorize_call` (which infers taint from a token
+        heuristic, since it cannot see inside the model), this takes a
+        :class:`LabeledValue` per argument — so an argument is untrusted iff its
+        own label says so. This is what the plan interpreter
+        (:mod:`tessera.plan`) uses: because the plan's control flow is fixed
+        from trusted input, every value's provenance is known exactly, and the
+        flow rule applies with no over-tainting.
+        """
+        profile = self._profile_for(tool)
+        raw_args = {name: lv.content for name, lv in labeled_args.items()}
+        tainted = {
+            name: [f"value is {lv.level.name}"]
+            for name, lv in labeled_args.items()
+            if lv.is_untrusted
+        }
+        arg_level, provenance, auto_declassified, cleaned = self._evaluate_arguments(
+            tool, raw_args, tainted
+        )
+        return self._finalize_decision(
+            tool, profile, raw_args, arg_level, provenance,
+            declassified or auto_declassified, cleaned,
+        )
+
+    def _finalize_decision(
+        self,
+        tool: str,
+        profile: ToolProfile,
+        capability_args: Mapping[str, Any],
+        arg_level: TrustLevel,
+        provenance: list[str],
+        declassified: bool,
+        cleaned: dict | None,
+    ) -> PolicyResult:
+        """Run both gates (least authority, then flow rule) and record."""
         # Gate 1: least authority. A missing/insufficient capability is a hard
         # block — ambient authority is exactly what we are removing.
         if self._capability_required(profile):
-            cap_res = self._check_capability(tool, args)
+            cap_res = self._check_capability(tool, capability_args)
             if self.ledger:
                 self.ledger.capability(
                     tool, cap_res.authorized, cap_res.reason, cap_res.capability_id
@@ -364,10 +419,7 @@ class Session:
 
         # Gate 2: the provenance flow rule.
         result = self.policy.evaluate(
-            profile,
-            arg_level,
-            declassified=declassified or auto_declassified,
-            provenance=tuple(provenance),
+            profile, arg_level, declassified=declassified, provenance=tuple(provenance)
         )
         if cleaned and result.decision is Decision.ALLOW:
             result = replace(result, cleaned_arguments=cleaned)
