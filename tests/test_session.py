@@ -1,4 +1,5 @@
 from tessera.classification import classify_tool, operator_profile, Reversibility
+from tessera.declassify import EnumDeclassifier, PatternDeclassifier
 from tessera.policy import Decision, PolicyEngine, Strictness
 from tessera.session import Session
 
