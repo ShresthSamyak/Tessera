@@ -69,6 +69,16 @@ def build_parser() -> argparse.ArgumentParser:
         nargs=argparse.REMAINDER,
         help="-- followed by the command that launches the upstream server.",
     )
+
+    bench = sub.add_parser(
+        "bench",
+        help="Evaluate the containment / utility-tax frontier on the built-in suite.",
+    )
+    bench.add_argument(
+        "--detail",
+        action="store_true",
+        help="Show the per-scenario outcome for each strictness setting.",
+    )
     return parser
 
 
@@ -92,6 +102,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             hitl=_console_hitl if args.approve == "console" else None,
         )
         proxy.run()
+        return 0
+
+    if args.command == "bench":
+        from tessera.eval.harness import evaluate_frontier, format_frontier
+
+        points = evaluate_frontier()
+        print("Tessera frontier -- attack containment vs. utility tax\n")
+        print(format_frontier(points, detail=args.detail))
+        print(
+            "\nHigher containment with lower tax is better. Note that 'balanced'"
+            " trades\ncontainment of the laundering attack for a much lower tax;"
+            " 'paranoid'\ncontains everything at a higher tax. That trade is the"
+            " knob."
+        )
         return 0
 
     parser.error(f"unknown command {args.command!r}")
