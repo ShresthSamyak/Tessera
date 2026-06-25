@@ -181,20 +181,27 @@ tessera bench --detail        # or: python examples/benchmark_demo.py
 
 On the built-in suite (4 injection attacks, 3 benign workflows):
 
-| strictness   | containment | utility tax | escalations |
+| mode         | containment | utility tax | escalations |
 | ------------ | ----------- | ----------- | ----------- |
 | `paranoid`   | 100 %       | 67 %        | 0           |
 | `balanced`   | 75 %        | 33 %        | 1           |
 | `permissive` | 75 %        | 33 %        | 4           |
+| **`plan`**   | **100 %**   | **33 %**    | **0**       |
 
-The finding is honest: `balanced` value-flow matching catches literal
-exfiltration cheaply but is **evaded by the data-laundering attack** (the
-payload paraphrased through the model); `paranoid` context-taint contains
-laundering too, at the cost of over-tainting benign work. Choosing between them
-*is* the security/usability trade -- and the residual tax on the legitimate
-"summarize an untrusted doc and email it to yourself" workflow is exactly what a
-v0.3 declassifier exists to relieve. Next step for credibility: run the same
-defense on [AgentDojo](https://github.com/ethz-spylab/agentdojo).
+The heuristic modes trade off along the frontier: `balanced` value-flow matching
+catches literal exfiltration cheaply but is **evaded by the data-laundering
+attack** (the payload paraphrased through the model); `paranoid` context-taint
+contains laundering too, but at the cost of **over-tainting** benign work.
+
+The **`plan`** row is the [plan interpreter](#the-plan-interpreter-containment-by-construction)
+and it **Pareto-dominates** both: full containment (the laundering attack is
+contained *structurally* -- it was never a step in the plan) at the *lower* tax
+(precise provenance means no over-tainting). For the same containment as
+`paranoid` it halves the tax; for the same tax as `balanced` it raises
+containment to 100 %. The only remaining tax is the genuine "email an untrusted
+summary to yourself" case -- which a declassifier relieves. Next step for
+external credibility: run the same defense on
+[AgentDojo](https://github.com/ethz-spylab/agentdojo).
 
 ## The plan interpreter (containment by construction)
 
