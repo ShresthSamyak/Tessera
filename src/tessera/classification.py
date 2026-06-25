@@ -155,10 +155,23 @@ _DESTINATION_PARAM_RE = re.compile(
 )
 
 
-def _tokenize(name: str) -> list[str]:
-    """Split a tool name like 'sendEmail' / 'send_email' / 'send-email'."""
+def _stem(token: str) -> str:
+    """Crudely normalize a verb's surface form (sends/sending/sent -> send)."""
+    for suffix in ("ing", "ed", "es", "s"):
+        if token.endswith(suffix) and len(token) - len(suffix) >= 3:
+            return token[: -len(suffix)]
+    return token
+
+
+def _tokenize(name: str) -> set[str]:
+    """Split a tool name like 'sendEmail' / 'send_email' / 'send-email'.
+
+    Returns both the raw tokens and their stems, so verb matching catches
+    plurals and tenses ("sends", "fetching") without a real stemmer.
+    """
     spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name)
-    return [t for t in re.split(r"[\s_\-./]+", spaced.lower()) if t]
+    raw = [t for t in re.split(r"[\s_\-./]+", spaced.lower()) if t]
+    return set(raw) | {_stem(t) for t in raw}
 
 
 def _schema_param_names(schema: Mapping[str, Any] | None) -> list[str]:
@@ -192,8 +205,7 @@ def classify_tool(
     """
     # Description tokens widen the signal: a read-named tool whose description
     # says "sends ..." should still be caught.
-    tokens = _tokenize(f"{name} {description}")
-    token_set = set(tokens)
+    token_set = _tokenize(f"{name} {description}")
     params = _schema_param_names(input_schema)
 
     has_destination_param = any(_DESTINATION_PARAM_RE.search(p) for p in params)
