@@ -196,6 +196,34 @@ laundering too, at the cost of over-tainting benign work. Choosing between them
 v0.3 declassifier exists to relieve. Next step for credibility: run the same
 defense on [AgentDojo](https://github.com/ethz-spylab/agentdojo).
 
+## Run inside AgentDojo
+
+[AgentDojo](https://github.com/ethz-spylab/agentdojo) is the standard
+prompt-injection benchmark for tool-using agents (the one CaMeL reported on).
+Tessera plugs in as a single pipeline element:
+
+```python
+from agentdojo.agent_pipeline import AgentPipeline, InitQuery, ToolsExecutionLoop, ToolsExecutor
+from tessera import Session, PolicyEngine, Strictness
+from tessera.integrations.agentdojo import TesseraGuard
+
+session = Session(policy=PolicyEngine(Strictness.PARANOID))
+pipeline = AgentPipeline([
+    InitQuery(),
+    llm,
+    TesseraGuard(session),                      # classify tools + swap in the gated runtime
+    ToolsExecutionLoop([ToolsExecutor(), llm]),
+])
+```
+
+`TesseraGuard` auto-classifies the runtime's tools and wraps
+`FunctionsRuntime.run_function` so every tool execution passes both Tessera gates
+(flow rule + capabilities) and every result is labelled and sanitized -- a
+refused call comes back as a tool error the agent can read. The `agentdojo`
+import is optional: `tessera.integrations.agentdojo` imports without it, and the
+enforcement logic is unit-tested against a faithful mock. A real benchmark run
+needs `pip install "tessera-proxy[agentdojo]"` plus model API keys.
+
 ## Develop
 
 ```bash

@@ -32,6 +32,9 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+# AgentDojo brings real LLM/model dependencies and is only needed to run the
+# benchmark; the adapter (tessera.integrations.agentdojo) imports without it.
+agentdojo = ["agentdojo>=0.1.23"]
 
 [project.scripts]
 tessera = "tessera.cli:main"
