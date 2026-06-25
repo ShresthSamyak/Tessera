@@ -190,9 +190,10 @@ def classify_tool(
       * an *unrecognized* tool is treated as a reversible write (cautious
         middle), never as read-only.
     """
-    tokens = _tokenize(name)
+    # Description tokens widen the signal: a read-named tool whose description
+    # says "sends ..." should still be caught.
+    tokens = _tokenize(f"{name} {description}")
     token_set = set(tokens)
-    haystack = f"{name} {description}".lower()
     params = _schema_param_names(input_schema)
 
     has_destination_param = any(_DESTINATION_PARAM_RE.search(p) for p in params)
