@@ -41,7 +41,24 @@ from tessera.sanitize import sanitize_markdown
 # Minimum length of a token we consider "significant" enough to track for
 # value-flow matching. Short common words would cause false positives.
 _MIN_TOKEN_LEN = 6
-_TOKEN_RE = re.compile(r"[A-Za-z0-9_\-./:@+=]{%d,}" % _MIN_TOKEN_LEN)
+_TOKEN_RE = re.compile(r"[A-Za-z0-9_\-./:@+=?&%]+")
+_TRIM = ".,;:!?\"'`()[]{}<>"
+
+
+def _significant_tokens(text: str) -> set[str]:
+    """Extract normalized tokens long enough to be a meaningful data fragment.
+
+    Used symmetrically on untrusted results and on proposed-call arguments:
+    a non-empty intersection means untrusted material is literally flowing into
+    the call. Tokens are trimmed of surrounding punctuation so that
+    ``SECRET998877.`` (sentence-final) matches ``SECRET998877`` in an argument.
+    """
+    out: set[str] = set()
+    for match in _TOKEN_RE.findall(text):
+        tok = match.strip(_TRIM)
+        if len(tok) >= _MIN_TOKEN_LEN:
+            out.add(tok)
+    return out
 
 
 def _stringify(value: Any) -> str:
@@ -139,7 +156,7 @@ class Session:
         # Propagate taint into the session.
         if resolved_level.is_untrusted:
             self.context_level = combine(self.context_level, resolved_level)
-            self._tainted_tokens.update(_TOKEN_RE.findall(text))
+            self._tainted_tokens.update(_significant_tokens(text))
 
         if self.ledger:
             self.ledger.label(
@@ -172,11 +189,10 @@ class Session:
                 ]
             return TrustLevel.TRUSTED, ["no untrusted data in session"]
 
-        # Value-flow matching: is any tracked untrusted token present in args?
-        arg_text = _stringify(args)
-        hits = sorted(
-            {tok for tok in self._tainted_tokens if tok in arg_text}
-        )
+        # Value-flow matching: do the args share any significant token with
+        # untrusted material we've seen?
+        arg_tokens = _significant_tokens(_stringify(args))
+        hits = sorted(self._tainted_tokens & arg_tokens)
         if hits:
             shown = ", ".join(hits[:3]) + (" …" if len(hits) > 3 else "")
             return TrustLevel.UNTRUSTED, [
