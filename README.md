@@ -107,6 +107,34 @@ A markdown-image exfiltration of a held secret that **sails through vanilla
 MCP** and is **blocked by Tessera** at the dataflow layer -- with the audit
 trail showing exactly why.
 
+## Measure the frontier
+
+A security product can't be judged on one number -- any system blocks every
+attack by blocking everything. The game is containment *without* breaking
+legitimate work, so Tessera is measured on a **frontier**: attack-containment
+rate against utility tax, across strictness settings.
+
+```bash
+tessera bench --detail        # or: python examples/benchmark_demo.py
+```
+
+On the built-in suite (4 injection attacks, 3 benign workflows):
+
+| strictness   | containment | utility tax | escalations |
+| ------------ | ----------- | ----------- | ----------- |
+| `paranoid`   | 100 %       | 67 %        | 0           |
+| `balanced`   | 75 %        | 33 %        | 1           |
+| `permissive` | 75 %        | 33 %        | 4           |
+
+The finding is honest: `balanced` value-flow matching catches literal
+exfiltration cheaply but is **evaded by the data-laundering attack** (the
+payload paraphrased through the model); `paranoid` context-taint contains
+laundering too, at the cost of over-tainting benign work. Choosing between them
+*is* the security/usability trade -- and the residual tax on the legitimate
+"summarize an untrusted doc and email it to yourself" workflow is exactly what a
+v0.3 declassifier exists to relieve. Next step for credibility: run the same
+defense on [AgentDojo](https://github.com/ethz-spylab/agentdojo).
+
 ## Develop
 
 ```bash

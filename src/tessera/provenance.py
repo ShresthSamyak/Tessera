@@ -116,6 +116,32 @@ class LabeledValue:
         )
         return LabeledValue(content=content, node=node)
 
+    def declassify(
+        self,
+        content: Any,
+        *,
+        label: str,
+        raise_to: TrustLevel = TrustLevel.TRUSTED,
+    ) -> "LabeledValue":
+        """Produce a value whose trust level is *raised* above this one.
+
+        This is the single, deliberate exception to "derivation can only lower
+        trust" (see :meth:`derive`). It is sound only because the caller — a
+        declassifier (:mod:`tessera.declassify`) — has constrained ``content``
+        to a value drawn from a bounded, attacker-uninfluenced space, so an
+        injected instruction cannot survive into the emitted value. The new
+        node is attributed to the trusted control plane and keeps an edge back
+        to the tainted input, so the audit chain still shows where it came from.
+        """
+        node = ProvenanceNode(
+            node_id=_next_id("dec"),
+            origin=Origin.CONTROL_PLANE,
+            level=raise_to,
+            label=label,
+            derived_from=(self.node.node_id,),
+        )
+        return LabeledValue(content=content, node=node)
+
 
 @dataclass
 class ProvenanceGraph:
