@@ -23,7 +23,9 @@ from tessera.eval.harness import (
     FrontierPoint,
     ScenarioResult,
     evaluate_frontier,
+    evaluate_plan_point,
     run_scenario,
+    run_scenario_plan,
 )
 from tessera.eval.scenarios import CATALOG, Scenario, default_scenarios
 
@@ -34,5 +36,7 @@ __all__ = [
     "ScenarioResult",
     "default_scenarios",
     "evaluate_frontier",
+    "evaluate_plan_point",
     "run_scenario",
+    "run_scenario_plan",
 ]
