@@ -1,5 +1,4 @@
 from tessera.classification import classify_tool, operator_profile, Reversibility
-from tessera.labels import Origin, TrustLevel
 from tessera.policy import Decision, PolicyEngine, Strictness
 from tessera.session import Session
 
@@ -82,7 +81,7 @@ def test_explain_renders_provenance():
     assert "ESCALATE" in text
 
 
-def test_ledger_records_decisions(tmp_path):
+def test_ledger_records_decisions():
     from tessera.ledger import open_ledger
     led = open_ledger(session_id="t")
     s = Session(policy=PolicyEngine(Strictness.BALANCED), ledger=led)
