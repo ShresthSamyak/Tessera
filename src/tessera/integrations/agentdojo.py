@@ -66,12 +66,6 @@ except Exception:  # pragma: no cover
 Approver = Callable[[PolicyResult], bool]
 
 
-def _stringify(value: Any) -> str:
-    if isinstance(value, str):
-        return value
-    return str(value)
-
-
 def _schema_of(function: Any) -> Optional[Mapping[str, Any]]:
     """Best-effort extraction of an MCP-style ``{"properties": {...}}`` schema.
 
@@ -85,9 +79,10 @@ def _schema_of(function: Any) -> Optional[Mapping[str, Any]]:
     model_schema = getattr(params, "model_json_schema", None)
     if callable(model_schema):
         try:
-            return model_schema()
+            schema = model_schema()
         except Exception:
             return None
+        return schema if isinstance(schema, Mapping) else None
     if isinstance(params, Mapping):
         return params
     return None
