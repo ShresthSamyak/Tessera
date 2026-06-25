@@ -103,6 +103,32 @@ line between a declassifier and mere laundering:
 `PatternDeclassifier` even refuses, at construction time, any regex loose enough
 to match a battery of injection probes. See `python examples/declassifier_demo.py`.
 
+## Capabilities (kill ambient authority)
+
+A normal agent holds a credential that works for *any* call -- send mail to
+anyone, delete any file. That ambient authority is what makes a hijacked agent
+dangerous. Tessera replaces it with **capabilities**: unforgeable, just-in-time,
+narrowly-scoped grants that **attenuate** down delegation chains (permissions
+only ever narrow).
+
+```python
+from tessera import CapabilityEngine, tool_is, arg_equals
+
+engine = CapabilityEngine()
+session = Session(capability_engine=engine, require_capabilities=True, ...)
+
+# Mint a grant scoped to one recipient, this run only:
+session.grant(engine.mint(tool_is("send_email"), arg_equals("to", "bob@co.test")))
+```
+
+Now a send to `bob@co.test` is allowed, while a send to `attacker@evil.test` is
+**blocked even though the data is clean** -- no capability authorizes it. The
+construction is macaroon-style: each capability is an HMAC chain over its
+caveats, so it is unforgeable without the root key, attenuation needs no secret,
+and you can only ever *add* restrictions. Both gates apply to a dangerous call:
+a valid capability **and** the provenance flow rule. See
+`python examples/capability_demo.py`.
+
 ## Quick start
 
 ```bash
