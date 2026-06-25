@@ -168,21 +168,27 @@ class Session:
 
         The trust level is inferred from the tool's blast radius unless given:
         a result from an exfiltration-capable / web-facing tool is attacker-
-        reachable and therefore ``UNTRUSTED``. Returns the labeled value whose
-        ``content`` has been sanitized for rendered-markdown exfil.
+        reachable and therefore ``UNTRUSTED``. A string result has its rendered
+        markdown sanitized (closing the image-exfil channel); a structured
+        (non-string) result is preserved as-is so the plan interpreter can read
+        fields from it — it is still tainted, but not deep-sanitized (a known
+        limitation tracked for structured returns).
         """
         profile = self._profile_for(tool)
         resolved_origin = origin or self._infer_origin(profile)
         resolved_level = level if level is not None else resolved_origin.default_level
 
-        # Sanitize the rendered content (closes the markdown-image channel).
         text = _stringify(content)
-        san = sanitize_markdown(text, allowlist=self.allowlist)
-        if san.changed and self.ledger:
-            self.ledger.sanitize(tool, san.removed)
+        if isinstance(content, str):
+            san = sanitize_markdown(content, allowlist=self.allowlist)
+            if san.changed and self.ledger:
+                self.ledger.sanitize(tool, san.removed)
+            new_content: Any = san.text
+        else:
+            new_content = content  # preserve structure for field access
 
         value = LabeledValue.from_origin(
-            san.text,
+            new_content,
             resolved_origin,
             label=f"{tool}()",
             level=resolved_level,
