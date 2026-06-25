@@ -4,7 +4,6 @@ import time
 import pytest
 
 from tessera.capabilities import (
-    Capability,
     CapabilityEngine,
     arg_equals,
     arg_in,
