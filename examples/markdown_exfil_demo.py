@@ -20,10 +20,8 @@ trail showing exactly why Tessera refused.
 
 from __future__ import annotations
 
-import json
-
 from tessera.ledger import open_ledger
-from tessera.policy import Decision, PolicyEngine, Strictness
+from tessera.policy import PolicyEngine, Strictness
 from tessera.proxy import MCPInterceptor
 from tessera.session import Session
 
@@ -91,7 +89,7 @@ def _hr(title: str) -> None:
 
 def run_vanilla() -> None:
     """No protection: the agent obeys the injection and the secret leaks."""
-    _hr("BEFORE — vanilla MCP (no protection)")
+    _hr("BEFORE -- vanilla MCP (no protection)")
     server = FakeMCPServer()
     # Agent reads the doc...
     doc = server({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
@@ -113,7 +111,7 @@ def run_vanilla() -> None:
 
 def run_tessera() -> None:
     """Same attack, through Tessera. The exfil is blocked; the image is defanged."""
-    _hr("AFTER — through Tessera (strictness=balanced)")
+    _hr("AFTER -- through Tessera (strictness=balanced)")
     server = FakeMCPServer()
     ledger = open_ledger(session_id="demo")
     session = Session(
