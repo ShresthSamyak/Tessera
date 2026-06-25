@@ -26,7 +26,7 @@ from tessera.eval.harness import evaluate_frontier, format_frontier
 def main() -> None:
     points = evaluate_frontier()
     print("Tessera frontier -- attack containment vs. utility tax")
-    print("(built-in suite: 4 injection attacks, 3 benign workflows)\n")
+    print("(built-in suite: 5 injection attacks, 3 benign workflows)\n")
     print(format_frontier(points, detail=True))
 
     best = max(points, key=lambda p: p.containment_rate - p.utility_tax)
