@@ -23,7 +23,8 @@ from dataclasses import dataclass, field
 
 from tessera.eval.scenarios import Scenario, default_scenarios
 from tessera.ledger import open_ledger
-from tessera.policy import PolicyEngine, PolicyResult, Strictness
+from tessera.plan import PlanInterpreter
+from tessera.policy import Decision, PolicyEngine, PolicyResult, Strictness
 from tessera.proxy import MCPInterceptor
 from tessera.session import Session
 
@@ -118,13 +119,19 @@ def run_scenario(scenario: Scenario, strictness: Strictness) -> ScenarioResult:
 
 @dataclass
 class FrontierPoint:
-    """Aggregate metrics for one strictness setting."""
+    """Aggregate metrics for one mode (a strictness setting, or plan mode)."""
 
     strictness: Strictness
     containment_rate: float
     utility_tax: float
     escalations: int
     results: list[ScenarioResult] = field(default_factory=list)
+    #: Display name; defaults to the strictness value. "plan" for plan mode.
+    label: str = ""
+
+    @property
+    def display(self) -> str:
+        return self.label or self.strictness.value
 
     @property
     def attacks_total(self) -> int:
