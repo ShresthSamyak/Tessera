@@ -119,6 +119,12 @@ class MCPInterceptor:
                     id_, "human approval was denied or unavailable; " + result.reason
                 )
 
+        # If a declassifier canonicalized any arguments, forward the cleaned
+        # values, not the raw (possibly-smuggled) originals -- defense in depth.
+        if result.cleaned_arguments:
+            merged = {**args, **result.cleaned_arguments}
+            message = {**message, "params": {**params, "arguments": merged}}
+
         # Allowed (or human-approved): forward to upstream, then label and
         # sanitize the result on the way back.
         response = self.upstream(message)

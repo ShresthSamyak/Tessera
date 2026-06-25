@@ -192,30 +192,89 @@ class Session:
 
     # -- authorizing calls (taint out) -------------------------------------
 
-    def _arg_level(self, args: Mapping[str, Any] | Any) -> tuple[TrustLevel, list[str]]:
-        """Determine the trust level of a proposed call's arguments.
+    def _tainted_args(self, args: Mapping[str, Any] | Any) -> dict[str, list[str]]:
+        """Which arguments carry untrusted material, under the active mode.
 
-        Returns the level and a short provenance description for the ledger.
+        Returns a map of argument name -> the untrusted tokens found in it. In
+        ``paranoid`` mode, once the session is tainted *every* argument is
+        suspect (the model could have laundered the payload into any of them),
+        so they are all listed. In value-flow modes, only arguments whose text
+        actually contains a tracked untrusted token are listed.
         """
-        if self.policy.strictness is Strictness.PARANOID:
-            if self.context_level.is_untrusted:
-                return self.context_level, [
-                    "context taint: untrusted data has entered this session"
-                ]
-            return TrustLevel.TRUSTED, ["no untrusted data in session"]
+        if not isinstance(args, Mapping):
+            # Non-mapping argument payload: treat as one opaque value.
+            text = _stringify(args)
+            if self.policy.strictness is Strictness.PARANOID:
+                return {"": ["context taint"]} if self.context_level.is_untrusted else {}
+            hits = sorted(tok for tok in self._tainted_tokens if tok in text)
+            return {"": hits} if hits else {}
 
-        # Value-flow matching: does any untrusted fragment we've seen appear
-        # inside the argument text? Tainted tokens are punctuation-trimmed and
-        # >= _MIN_TOKEN_LEN, so a substring test catches both a verbatim secret
-        # and one embedded like ``key=<secret>`` without matching short noise.
-        arg_text = _stringify(args)
-        hits = sorted(tok for tok in self._tainted_tokens if tok in arg_text)
-        if hits:
+        tainted: dict[str, list[str]] = {}
+        paranoid = self.policy.strictness is Strictness.PARANOID
+        session_tainted = self.context_level.is_untrusted
+        for name, value in args.items():
+            text = _stringify(value)
+            if paranoid and session_tainted:
+                tainted[name] = ["context taint"]
+            else:
+                hits = sorted(tok for tok in self._tainted_tokens if tok in text)
+                if hits:
+                    tainted[name] = hits
+        return tainted
+
+    def _evaluate_arguments(
+        self, tool: str, args: Mapping[str, Any] | Any
+    ) -> tuple[TrustLevel, list[str], bool, dict | None]:
+        """Resolve a call's argument trust level, applying any declassifiers.
+
+        Returns ``(arg_level, provenance, declassified, cleaned_args)`` where
+        ``declassified`` is True iff every tainted argument was cleared by a
+        declassifier, and ``cleaned_args`` carries the canonicalized
+        substitutions to forward upstream (or None if nothing changed).
+        """
+        tainted = self._tainted_args(tool, args)
+        if not tainted:
+            return TrustLevel.TRUSTED, ["arguments contain no tracked untrusted material"], False, None
+
+        provenance: list[str] = []
+        cleaned: dict[str, Any] = {}
+        remaining: list[str] = []
+        is_mapping = isinstance(args, Mapping)
+
+        for name, hits in tainted.items():
+            declassifier = self.declassifiers.get((tool, name))
             shown = ", ".join(hits[:3]) + (" …" if len(hits) > 3 else "")
-            return TrustLevel.UNTRUSTED, [
-                f"argument carries untrusted material ({shown})"
-            ]
-        return TrustLevel.TRUSTED, ["arguments contain no tracked untrusted material"]
+            arg_label = name or "<value>"
+            if declassifier is None:
+                remaining.append(name)
+                provenance.append(f"{arg_label} carries untrusted material ({shown})")
+                continue
+            raw = _stringify(args[name]) if is_mapping else _stringify(args)
+            outcome = declassifier.apply(raw)
+            if self.ledger:
+                self.ledger.declassify(
+                    tool, arg_label, declassifier.name, outcome.accepted,
+                    outcome.reason, declassifier.constraint(),
+                )
+            if outcome.accepted:
+                cleaned[name] = outcome.value
+                provenance.append(
+                    f"{arg_label} declassified via {declassifier.name} "
+                    f"({declassifier.constraint()})"
+                )
+            else:
+                remaining.append(name)
+                provenance.append(
+                    f"{arg_label} REJECTED by {declassifier.name}: {outcome.reason}"
+                )
+
+        if remaining:
+            # At least one tainted argument could not be cleared.
+            return TrustLevel.UNTRUSTED, provenance, False, None
+
+        # Every tainted argument passed a declassifier.
+        cleaned_args = cleaned if (cleaned and is_mapping) else None
+        return TrustLevel.UNTRUSTED, provenance, True, cleaned_args
 
     def authorize_call(
         self,
@@ -224,15 +283,22 @@ class Session:
         *,
         declassified: bool = False,
     ) -> PolicyResult:
-        """Evaluate a proposed tool call against the flow rule and record it."""
+        """Evaluate a proposed tool call against the flow rule and record it.
+
+        Untrusted arguments are routed through any registered declassifiers
+        first; ``declassified`` may also be forced True by a caller that has
+        already cleared the data out of band.
+        """
         profile = self._profile_for(tool)
-        arg_level, provenance = self._arg_level(args)
+        arg_level, provenance, auto_declassified, cleaned = self._evaluate_arguments(tool, args)
         result = self.policy.evaluate(
             profile,
             arg_level,
-            declassified=declassified,
+            declassified=declassified or auto_declassified,
             provenance=tuple(provenance),
         )
+        if cleaned and result.decision is Decision.ALLOW:
+            result = replace(result, cleaned_arguments=cleaned)
         if self.ledger:
             self.ledger.decision(result)
         return result
