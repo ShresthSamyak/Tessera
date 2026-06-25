@@ -19,7 +19,7 @@ through the real proxy, and show the audit trail.
 
 from __future__ import annotations
 
-from tessera.classification import Reversibility, classify_tool, operator_profile
+from tessera.classification import Reversibility, operator_profile
 from tessera.declassify import PatternDeclassifier
 from tessera.ledger import open_ledger
 from tessera.policy import PolicyEngine, Strictness
