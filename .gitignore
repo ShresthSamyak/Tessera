@@ -20,6 +20,9 @@ htmlcov/
 *.ledger.jsonl
 ledger.jsonl
 
+# Working state / scratch context — never commit
+HANDOFF.md
+
 # Editor / OS
 .idea/
 .vscode/
