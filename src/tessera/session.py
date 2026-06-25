@@ -232,7 +232,7 @@ class Session:
         declassifier, and ``cleaned_args`` carries the canonicalized
         substitutions to forward upstream (or None if nothing changed).
         """
-        tainted = self._tainted_args(tool, args)
+        tainted = self._tainted_args(args)
         if not tainted:
             return TrustLevel.TRUSTED, ["arguments contain no tracked untrusted material"], False, None
 

@@ -27,6 +27,17 @@ from tessera.classification import (
     ToolProfile,
     classify_tool,
 )
+from tessera.declassify import (
+    AllowlistDeclassifier,
+    BooleanDeclassifier,
+    Declassifier,
+    DeclassifyOutcome,
+    EnumDeclassifier,
+    IntegerDeclassifier,
+    IsoDateDeclassifier,
+    NumberDeclassifier,
+    PatternDeclassifier,
+)
 from tessera.labels import Origin, TrustLevel
 from tessera.policy import Decision, PolicyEngine, PolicyResult, Strictness
 from tessera.provenance import LabeledValue, ProvenanceNode
