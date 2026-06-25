@@ -179,13 +179,13 @@ rate against utility tax, across strictness settings.
 tessera bench --detail        # or: python examples/benchmark_demo.py
 ```
 
-On the built-in suite (4 injection attacks, 3 benign workflows):
+On the built-in suite (5 injection attacks, 3 benign workflows):
 
 | mode         | containment | utility tax | escalations |
 | ------------ | ----------- | ----------- | ----------- |
 | `paranoid`   | 100 %       | 67 %        | 0           |
-| `balanced`   | 75 %        | 33 %        | 1           |
-| `permissive` | 75 %        | 33 %        | 4           |
+| `balanced`   | 80 %        | 33 %        | 1           |
+| `permissive` | 80 %        | 33 %        | 5           |
 | **`plan`**   | **100 %**   | **33 %**    | **0**       |
 
 The heuristic modes trade off along the frontier: `balanced` value-flow matching
@@ -194,14 +194,16 @@ attack** (the payload paraphrased through the model); `paranoid` context-taint
 contains laundering too, but at the cost of **over-tainting** benign work.
 
 The **`plan`** row is the [plan interpreter](#the-plan-interpreter-containment-by-construction)
-and it **Pareto-dominates** both: full containment (the laundering attack is
-contained *structurally* -- it was never a step in the plan) at the *lower* tax
-(precise provenance means no over-tainting). For the same containment as
-`paranoid` it halves the tax; for the same tax as `balanced` it raises
-containment to 100 %. The only remaining tax is the genuine "email an untrusted
-summary to yourself" case -- which a declassifier relieves. Next step for
-external credibility: run the same defense on
-[AgentDojo](https://github.com/ethz-spylab/agentdojo).
+and it **Pareto-dominates** both: full containment at the *lower* tax (precise
+provenance means no over-tainting). For the same containment as `paranoid` it
+halves the tax; for the same tax as `balanced` it raises containment to 100 %.
+Containment isn't purely structural, either: the `value-corruption-reply` attack
+puts the dangerous step (replying to an inbound message) *inside* the plan with
+an attacker-controlled recipient, and plan mode contains it with the **flow
+rule** just like any untrusted value into an exfil tool. The only remaining tax
+is the genuine "email an untrusted summary to yourself" case -- which a
+declassifier relieves. Next step for external credibility: run the same defense
+on [AgentDojo](https://github.com/ethz-spylab/agentdojo).
 
 ## The plan interpreter (containment by construction)
 
