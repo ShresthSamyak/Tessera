@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tessera-proxy"
+version = "0.2.0"
+description = "A provenance control plane for tool-using agents — contain the blast radius of a prompt injection at the MCP layer."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "Tessera" }]
+keywords = [
+    "mcp",
+    "prompt-injection",
+    "security",
+    "agents",
+    "provenance",
+    "information-flow-control",
+    "taint-tracking",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+]
+# The v0.2 wedge core is pure stdlib. Keep runtime deps empty so the secure
+# path is trivial to adopt; transports/extras live behind optional groups.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+tessera = "tessera.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/tessera-security/tessera"
+Source = "https://github.com/tessera-security/tessera"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tessera"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
