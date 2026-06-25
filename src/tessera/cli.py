@@ -111,10 +111,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("Tessera frontier -- attack containment vs. utility tax\n")
         print(format_frontier(points, detail=args.detail))
         print(
-            "\nHigher containment with lower tax is better. Note that 'balanced'"
-            " trades\ncontainment of the laundering attack for a much lower tax;"
-            " 'paranoid'\ncontains everything at a higher tax. That trade is the"
-            " knob."
+            "\nHigher containment with lower tax is better. The strictness modes"
+            " trade off\nalong the frontier ('balanced' leaks the laundering"
+            " attack for lower tax;\n'paranoid' contains everything but"
+            " over-taints). 'plan' mode uses the CaMeL-\nstyle interpreter: it"
+            " contains injection-introduced steps structurally and uses\nprecise"
+            " provenance, so it Pareto-dominates -- full containment at the lower"
+            " tax."
         )
         return 0
 

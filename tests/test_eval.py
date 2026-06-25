@@ -11,7 +11,12 @@ the qualitative relationships that make the frontier meaningful:
 
 import pytest
 
-from tessera.eval.harness import evaluate_point, run_scenario
+from tessera.eval.harness import (
+    evaluate_plan_point,
+    evaluate_point,
+    run_scenario,
+    run_scenario_plan,
+)
 from tessera.eval.scenarios import CATALOG, attacks, benign
 from tessera.policy import Strictness
 
