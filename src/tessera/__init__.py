@@ -46,10 +46,19 @@ from tessera.session import Session
 __version__ = "0.2.0"
 
 __all__ = [
+    "AllowlistDeclassifier",
     "BlastRadius",
+    "BooleanDeclassifier",
     "Decision",
+    "Declassifier",
+    "DeclassifyOutcome",
+    "EnumDeclassifier",
+    "IntegerDeclassifier",
+    "IsoDateDeclassifier",
     "LabeledValue",
+    "NumberDeclassifier",
     "Origin",
+    "PatternDeclassifier",
     "PolicyEngine",
     "PolicyResult",
     "ProvenanceNode",
