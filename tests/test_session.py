@@ -152,7 +152,9 @@ def test_declassifier_clears_arg_even_in_paranoid():
 def test_declassify_recorded_in_ledger():
     from tessera.ledger import open_ledger
     led = open_ledger(session_id="t")
-    s = Session(policy=PolicyEngine(Strictness.BALANCED), ledger=led)
+    # Paranoid mode treats every arg of a tainted session as suspect, so the
+    # declassifier runs (and is logged) even for a short enum value.
+    s = Session(policy=PolicyEngine(Strictness.PARANOID), ledger=led)
     s.register_tool(classify_tool("read_doc", {"properties": {"doc_id": {}}}))
     s.register_tool(operator_profile(
         "set_alert", reversibility=Reversibility.IRREVERSIBLE, exfiltration_capable=False))
