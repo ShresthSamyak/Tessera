@@ -36,7 +36,7 @@ from tessera.declassify import Declassifier
 from tessera.labels import Origin, TrustLevel, combine
 from tessera.ledger import Ledger, open_ledger
 from tessera.policy import Decision, PolicyEngine, PolicyResult, Strictness
-from tessera.provenance import LabeledValue, Origin as _Origin, ProvenanceNode, ProvenanceGraph
+from tessera.provenance import LabeledValue, ProvenanceGraph
 from tessera.sanitize import sanitize_markdown
 
 # Minimum length of a token we consider "significant" enough to track for
@@ -80,6 +80,10 @@ class Session:
     ledger: Ledger | None = None
     allowlist: frozenset[str] = frozenset()
 
+    #: Declassifiers keyed by (tool name, argument name). The trusted control
+    #: plane decides which arguments may pass untrusted data through a membrane.
+    declassifiers: dict[tuple[str, str], Declassifier] = field(default_factory=dict)
+
     # --- internal state ---
     profiles: dict[str, ToolProfile] = field(default_factory=dict)
     graph: ProvenanceGraph = field(default_factory=ProvenanceGraph)
@@ -97,6 +101,16 @@ class Session:
     def register_tool(self, profile: ToolProfile) -> None:
         """Register a tool's blast-radius profile (auto or operator-set)."""
         self.profiles[profile.name] = profile
+
+    def register_declassifier(
+        self, tool: str, arg: str, declassifier: Declassifier
+    ) -> None:
+        """Permit untrusted data into ``tool``'s ``arg`` iff it passes ``declassifier``.
+
+        This is a trusted-control-plane decision: the operator declares a narrow
+        bottleneck through which tainted data may reach a dangerous tool.
+        """
+        self.declassifiers[(tool, arg)] = declassifier
 
     def register_tools_from_schema(self, tools: list[Mapping[str, Any]]) -> None:
         """Auto-classify a list of MCP tool descriptors (from tools/list)."""
