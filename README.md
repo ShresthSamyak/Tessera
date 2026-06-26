@@ -103,6 +103,15 @@ line between a declassifier and mere laundering:
 `PatternDeclassifier` even refuses, at construction time, any regex loose enough
 to match a battery of injection probes. See `python examples/declassifier_demo.py`.
 
+But the probe guard is necessary, not sufficient: a declassifier is only as safe
+as its **output space**. A regex that accepts *any well-formed email address* is
+tight against injection sentences yet semantically loose -- its output includes
+the attacker's address, so it launders the attack. An allowlist of known
+contacts is bounded and attacker-uninfluenced, so it contains the attack while
+still allowing legitimate replies. `python examples/declassifier_soundness_demo.py`
+runs the identical plan both ways and shows the loose one leak and the allowlist
+hold.
+
 ## Capabilities (kill ambient authority)
 
 A normal agent holds a credential that works for *any* call -- send mail to
