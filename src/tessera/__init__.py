@@ -66,6 +66,15 @@ from tessera.plan import (
     step,
     var,
 )
+from tessera.planner import (
+    ClaudePlanner,
+    Planner,
+    PlannerError,
+    ScriptedPlanner,
+    ToolSpec,
+    parse_plan,
+    plan_to_dict,
+)
 from tessera.policy import Decision, PolicyEngine, PolicyResult, Strictness
 from tessera.provenance import LabeledValue, ProvenanceNode
 from tessera.session import Session
@@ -91,13 +100,20 @@ __all__ = [
     "Call",
     "Const",
     "Field",
+    "ClaudePlanner",
     "Origin",
     "PatternDeclassifier",
     "Plan",
     "PlanInterpreter",
     "PlanRun",
+    "Planner",
+    "PlannerError",
     "PolicyEngine",
     "PolicyResult",
+    "ScriptedPlanner",
+    "ToolSpec",
+    "parse_plan",
+    "plan_to_dict",
     "ProvenanceNode",
     "Reversibility",
     "Session",
