@@ -189,18 +189,28 @@ class TesseraGuard(_Base):  # type: ignore[misc, valid-type]
     On each turn it (1) auto-classifies the runtime's tools into the session and
     (2) returns a :class:`TesseraRuntime` so all downstream tool execution is
     gated. It does not modify the query, env, or messages.
+
+    Pass either a fixed ``session`` (taint accumulates across every call — fine
+    for a single agent run) or a ``session_factory`` that mints a fresh session
+    per call. A benchmark reuses one pipeline across many independent tasks, so
+    it must use ``session_factory`` — otherwise one task's untrusted reads would
+    taint the next.
     """
 
     name = "tessera_guard"
 
     def __init__(
         self,
-        session: Session,
+        session: Optional[Session] = None,
         *,
+        session_factory: Optional[Callable[[], Session]] = None,
         approver: Optional[Approver] = None,
         on_block: str = "error",
     ):
+        if session is None and session_factory is None:
+            session = Session()
         self.session = session
+        self._session_factory = session_factory
         self._approver = approver
         self._on_block = on_block
 
@@ -212,13 +222,19 @@ class TesseraGuard(_Base):  # type: ignore[misc, valid-type]
         messages: Any = None,
         extra_args: Any = None,
     ) -> tuple[str, Any, Any, Any, dict]:
-        classify_runtime_tools(self.session, runtime)
+        # A fresh session per task when a factory is given; otherwise the fixed
+        # one. (A TesseraRuntime arriving here means a prior element already
+        # wrapped this turn's runtime — keep its session, stay idempotent.)
         if isinstance(runtime, TesseraRuntime):
-            wrapped = runtime  # already gated (idempotent across turns)
-        else:
-            wrapped = TesseraRuntime(
-                runtime, self.session, approver=self._approver, on_block=self._on_block
-            )
+            return (query, runtime, env, messages if messages is not None else [],
+                    extra_args if extra_args is not None else {})
+        session = self._session_factory() if self._session_factory else self.session
+        assert session is not None
+        self.session = session
+        classify_runtime_tools(session, runtime)
+        wrapped = TesseraRuntime(
+            runtime, session, approver=self._approver, on_block=self._on_block
+        )
         return (
             query,
             wrapped,
