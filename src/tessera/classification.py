@@ -96,6 +96,9 @@ _EXFIL_VERBS = (
     "message",
     "submit",
     "export",
+    # Granting a new principal access exposes data outward — exfil-flavored.
+    "invite",
+    "grant",
 )
 _IRREVERSIBLE_VERBS = (
     "delete",
@@ -146,12 +149,19 @@ _READ_VERBS = (
     "count",
 )
 
-# A free-text destination argument means the tool can reach an arbitrary
-# outbound endpoint — the hallmark of an exfiltration primitive.
-_DESTINATION_PARAM_RE = re.compile(
-    r"(url|uri|endpoint|host|recipient|to|address|email|destination|"
-    r"callback|webhook|channel)s?$",
-    re.IGNORECASE,
+# An *outbound* parameter lets the tool reach an arbitrary endpoint of its
+# own — a free-text URL/host/webhook is an exfiltration primitive regardless of
+# the verb (even ``get_webpage(url)`` leaks via the URL it fetches).
+_OUTBOUND_PARAM_RE = re.compile(
+    r"(url|uri|endpoint|host|callback|webhook)s?$", re.IGNORECASE
+)
+# A *recipient* parameter names who/where, but says nothing on its own about
+# direction: ``send_message(channel)`` sends *to* a channel (exfil) while
+# ``read_messages(channel)`` reads *from* one (not exfil). So a recipient
+# parameter only implies exfiltration when the tool also carries an exfil verb
+# — which the verb check already captures. We track it for the rationale only.
+_RECIPIENT_PARAM_RE = re.compile(
+    r"(recipient|to|address|email|destination|channel)s?$", re.IGNORECASE
 )
 
 
@@ -194,8 +204,11 @@ def classify_tool(
     The result is a default; operators should override for tools where they
     know the true effect. The heuristic:
 
-      * a free-text destination parameter (``url``, ``to``, ``recipient`` …) or
-        an exfil verb in the name ⇒ exfiltration-capable;
+      * a free-text *outbound* parameter (``url``, ``endpoint``, ``webhook`` …)
+        or an exfil verb in the name ⇒ exfiltration-capable. A *recipient*
+        parameter (``to``, ``channel`` …) alone is not enough — it could be a
+        read selector (``read_channel(channel)``) rather than a send target;
+        it only counts when paired with an exfil verb;
       * an irreversible verb (``delete``, ``transfer``, ``send`` …) ⇒
         irreversible;
       * otherwise a write verb ⇒ reversible write; a pure read verb ⇒
@@ -208,9 +221,13 @@ def classify_tool(
     token_set = _tokenize(f"{name} {description}")
     params = _schema_param_names(input_schema)
 
-    has_destination_param = any(_DESTINATION_PARAM_RE.search(p) for p in params)
+    has_outbound_param = any(_OUTBOUND_PARAM_RE.search(p) for p in params)
+    has_recipient_param = any(_RECIPIENT_PARAM_RE.search(p) for p in params)
     has_exfil_verb = any(v in token_set for v in _EXFIL_VERBS)
-    exfiltration_capable = has_destination_param or has_exfil_verb
+    # Exfiltration-capable iff it can reach an arbitrary endpoint (outbound
+    # param) OR it actually sends (exfil verb). A recipient parameter alone is
+    # NOT enough — it could just as well be a read selector.
+    exfiltration_capable = has_outbound_param or has_exfil_verb
 
     has_irreversible_verb = any(v in token_set for v in _IRREVERSIBLE_VERBS)
     has_write_verb = any(v in token_set for v in _WRITE_VERBS)
@@ -233,10 +250,12 @@ def classify_tool(
         reversibility = Reversibility.REVERSIBLE
         reasons.append("unrecognized verb; defaulting to reversible write")
 
-    if has_destination_param:
-        reasons.append("has a free-text destination parameter")
+    if has_outbound_param:
+        reasons.append("has a free-text outbound endpoint parameter")
     if has_exfil_verb:
         reasons.append("name contains an exfiltration verb")
+    if has_recipient_param and not exfiltration_capable:
+        reasons.append("has a recipient parameter but no send verb (read selector)")
 
     # Idempotency: pure reads and explicit set/label-style writes are
     # idempotent; creates/sends/deletes generally are not.

@@ -40,6 +40,33 @@ def test_delete_is_irreversible():
     assert p.is_dangerous
 
 
+def test_read_from_recipient_param_is_not_exfil():
+    # The regression fix: a 'channel' (recipient) param on a READ tool must NOT
+    # be flagged exfil-capable — it's a read selector, not a send target.
+    for name in ("read_channel_messages", "get_users_in_channel"):
+        p = classify_tool(name, {"properties": {"channel": {}}})
+        assert not p.blast_radius.exfiltration_capable, name
+        assert not p.is_dangerous, name
+
+
+def test_send_to_recipient_param_is_exfil():
+    p = classify_tool("send_channel_message", {"properties": {"channel": {}, "body": {}}})
+    assert p.blast_radius.exfiltration_capable  # 'send' verb + recipient param
+
+
+def test_outbound_url_param_is_exfil_even_on_get():
+    # Fetching an arbitrary URL leaks via the URL itself, regardless of verb.
+    p = classify_tool("get_webpage", {"properties": {"url": {}}})
+    assert p.blast_radius.exfiltration_capable
+    assert p.is_dangerous
+
+
+def test_granting_access_is_exfil_flavored():
+    p = classify_tool("invite_user_to_slack", {"properties": {"email": {}}})
+    assert p.blast_radius.exfiltration_capable  # 'invite' exposes data to a new party
+    assert p.is_dangerous
+
+
 def test_reversible_write_is_not_dangerous():
     p = classify_tool("add_label", {"properties": {"id": {}, "label": {}}})
     assert p.blast_radius.reversibility is Reversibility.REVERSIBLE
