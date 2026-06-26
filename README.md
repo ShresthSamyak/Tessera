@@ -301,9 +301,21 @@ pipeline = AgentPipeline([
 `FunctionsRuntime.run_function` so every tool execution passes both Tessera gates
 (flow rule + capabilities) and every result is labelled and sanitized -- a
 refused call comes back as a tool error the agent can read. The `agentdojo`
-import is optional: `tessera.integrations.agentdojo` imports without it, and the
-enforcement logic is unit-tested against a faithful mock. A real benchmark run
-needs `pip install "tessera-proxy[agentdojo]"` plus model API keys.
+import is optional: `tessera.integrations.agentdojo` imports without it.
+
+A ready-to-run benchmark harness compares Tessera against a no-defense baseline
+on real attacks:
+
+```bash
+pip install -e ".[agentdojo]"
+$env:OPENAI_API_KEY = "sk-..."          # your key; PowerShell shown
+python examples/agentdojo_bench.py      # small slice; scale up with flags
+python examples/agentdojo_bench.py --list   # inspect suites/attacks, no API calls
+```
+
+It reports **utility** and **Attack Success Rate** (ASR; containment = 1 − ASR,
+verified against AgentDojo's own polarity) for no-defense vs. `TesseraGuard`.
+Defaults are tiny to keep a first run cheap on `gpt-4o-mini`.
 
 ## Develop
 
