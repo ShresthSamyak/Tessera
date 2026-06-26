@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 
 DEFAULT_MODEL = "gpt-4o-mini-2024-07-18"
 BENCHMARK_VERSION = "v1.2.1"
@@ -59,7 +58,7 @@ def _import_agentdojo():
 
 def build_pipeline(ad, model: str, strictness):
     """Build the AgentDojo pipeline, optionally with TesseraGuard inserted."""
-    from tessera.policy import PolicyEngine, Strictness  # noqa: F401
+    from tessera.policy import PolicyEngine
     from tessera.session import Session
     from tessera.integrations.agentdojo import TesseraGuard
 
