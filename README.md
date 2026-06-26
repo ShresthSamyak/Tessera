@@ -167,6 +167,24 @@ lower tax, but evadable by laundering the payload through the model, which is
 what declassifiers and `paranoid` are for. Choosing among these *is* the
 security/usability trade.
 
+## Trust origins (don't over-taint vetted sources)
+
+A tool's **blast radius** is *what it can do*; its **origin** is *how much to
+trust what it returns*. By default every tool result is treated as
+attacker-reachable (so the flow rule stays sound), but that over-taints reads
+from sources an attacker can't influence. Tell Tessera which sources are vetted:
+
+```python
+session.trust_tool("internal_db")                       # vetted -> INTERNAL, won't taint
+session.set_tool_origin("read_inbox", Origin.INBOUND_MESSAGE)   # explicitly untrusted
+```
+
+A trusted source's output no longer taints the session, so legitimate work that
+reads it and then acts isn't blocked. Origins are also inferred from the tool
+name (`read_inbox` -> inbound message, `fetch_url` -> web) to sharpen the audit
+trail -- but inference never *relaxes* the gate; only an explicit `trust_tool`
+does.
+
 ## Try the demo
 
 ```bash
