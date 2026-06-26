@@ -96,6 +96,12 @@ class Session:
 
     # --- internal state ---
     profiles: dict[str, ToolProfile] = field(default_factory=dict)
+    #: Operator-declared trust origin per tool (how much to trust its output).
+    #: Blast radius is *what a tool can do*; origin is *how trustworthy what it
+    #: returns is*. Absent an entry, origin is inferred (conservatively).
+    tool_origins: dict[str, Origin] = field(default_factory=dict)
+    #: Explicit per-tool trust-level overrides (set via :meth:`trust_tool`).
+    tool_levels: dict[str, TrustLevel] = field(default_factory=dict)
     graph: ProvenanceGraph = field(default_factory=ProvenanceGraph)
     #: Floor trust level of everything ingested into context so far.
     context_level: TrustLevel = TrustLevel.TRUSTED
@@ -123,6 +129,30 @@ class Session:
         bottleneck through which tainted data may reach a dangerous tool.
         """
         self.declassifiers[(tool, arg)] = declassifier
+
+    def set_tool_origin(
+        self, tool: str, origin: Origin, *, level: TrustLevel | None = None
+    ) -> None:
+        """Declare the trust origin of a tool's output (overrides inference).
+
+        Use this to tell Tessera where a tool's data really comes from — e.g.
+        ``read_inbox`` returns ``INBOUND_MESSAGE`` (untrusted), a first-party
+        ``internal_db`` returns ``VETTED_SYSTEM`` (internal). ``level`` may pin
+        an explicit trust level if the origin's default isn't right.
+        """
+        self.tool_origins[tool] = origin
+        if level is not None:
+            self.tool_levels[tool] = level
+
+    def trust_tool(self, tool: str, level: TrustLevel = TrustLevel.INTERNAL) -> None:
+        """Mark a tool's output as coming from a vetted source (default INTERNAL).
+
+        Its results then carry a trusted level and do NOT taint the session, so
+        legitimate work that reads from a vetted system isn't over-gated. Only
+        do this for sources an attacker genuinely cannot influence.
+        """
+        self.tool_origins[tool] = Origin.VETTED_SYSTEM
+        self.tool_levels[tool] = level
 
     def grant(self, capability: Capability) -> None:
         """Add a capability to the session's held set (least authority).
@@ -175,8 +205,17 @@ class Session:
         limitation tracked for structured returns).
         """
         profile = self._profile_for(tool)
-        resolved_origin = origin or self._infer_origin(profile)
-        resolved_level = level if level is not None else resolved_origin.default_level
+        # Resolution order: explicit arg -> operator config -> name/blast-radius
+        # inference (conservative default).
+        resolved_origin = (
+            origin or self.tool_origins.get(tool) or self._infer_origin(tool, profile)
+        )
+        if level is not None:
+            resolved_level = level
+        elif tool in self.tool_levels:
+            resolved_level = self.tool_levels[tool]
+        else:
+            resolved_level = resolved_origin.default_level
 
         text = _stringify(content)
         if isinstance(content, str):
