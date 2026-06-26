@@ -156,7 +156,7 @@ class TesseraRuntime:
             permitted = bool(approver(decision))
 
         if not permitted:
-            return self._refuse(decision)
+            return self._refuse(decision, env)
 
         # Forward the declassified (canonicalized) arguments, not the raw ones.
         if decision.cleaned_arguments:
@@ -170,13 +170,13 @@ class TesseraRuntime:
                 result = labeled.content  # sanitized rendering
         return result, error
 
-    def _refuse(self, decision: PolicyResult) -> tuple[Any, str]:
+    def _refuse(self, decision: PolicyResult, env: Any = None) -> tuple[Any, str]:
         reason = f"TesseraBlocked: {decision.reason}"
         if self.__dict__["_on_block"] == "abort":
             try:  # pragma: no cover - only when agentdojo is installed
                 from agentdojo.agent_pipeline.errors import AbortAgentError
 
-                raise AbortAgentError(reason, [], None)
+                raise AbortAgentError(reason, [], env)
             except ImportError:
                 pass
         return "", reason
