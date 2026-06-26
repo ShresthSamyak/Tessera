@@ -35,6 +35,9 @@ dev = ["pytest>=7.0"]
 # AgentDojo brings real LLM/model dependencies and is only needed to run the
 # benchmark; the adapter (tessera.integrations.agentdojo) imports without it.
 agentdojo = ["agentdojo>=0.1.23"]
+# The Claude-backed planner needs the Anthropic SDK; tessera.planner imports
+# without it (ScriptedPlanner + parse_plan work offline / with an injected client).
+planner = ["anthropic>=0.40"]
 
 [project.scripts]
 tessera = "tessera.cli:main"
