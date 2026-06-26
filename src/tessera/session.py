@@ -249,11 +249,23 @@ class Session:
         return value
 
     @staticmethod
-    def _infer_origin(profile: ToolProfile) -> Origin:
-        # A tool that can reach arbitrary outbound endpoints is, symmetrically,
-        # a surface that returns attacker-reachable content (a fetched page).
-        if profile.blast_radius.exfiltration_capable:
+    def _infer_origin(tool: str, profile: ToolProfile) -> Origin:
+        """Guess a tool result's origin from its name and blast radius.
+
+        Only sharpens the *label* (for the audit trail / HITL prompt) — every
+        case here is still untrusted-or-unverified, so it never relaxes the
+        gate. To mark a source *trusted*, an operator must say so explicitly
+        (:meth:`trust_tool` / :meth:`set_tool_origin`).
+        """
+        name = tool.lower()
+        if any(k in name for k in ("inbox", "email", "mail", "message", "dm")):
+            return Origin.INBOUND_MESSAGE
+        if profile.blast_radius.exfiltration_capable or any(
+            k in name for k in ("web", "url", "http", "fetch", "browse", "search", "page")
+        ):
             return Origin.WEB_CONTENT
+        if any(k in name for k in ("doc", "file", "pdf", "attachment", "upload", "download")):
+            return Origin.DOCUMENT
         return Origin.TOOL_OUTPUT
 
     # -- authorizing calls (taint out) -------------------------------------

@@ -1,11 +1,60 @@
 from tessera.classification import classify_tool, operator_profile, Reversibility
 from tessera.declassify import EnumDeclassifier, PatternDeclassifier
+from tessera.labels import Origin, TrustLevel
 from tessera.policy import Decision, PolicyEngine, Strictness
 from tessera.session import Session
 
 
 def _session(strictness=Strictness.BALANCED):
     return Session(policy=PolicyEngine(strictness=strictness))
+
+
+# --- per-tool origin / trust configuration --------------------------------
+
+def test_trusted_tool_result_does_not_taint():
+    s = _session(Strictness.PARANOID)
+    s.register_tool(classify_tool("internal_db", {"properties": {"query": {}}}))
+    s.trust_tool("internal_db")  # vetted -> INTERNAL
+    v = s.ingest_result("internal_db", "row: SECRETish-LOOKING-VALUE-123456")
+    assert not v.is_untrusted
+    assert not s.is_tainted  # trusted read must not taint the session
+
+
+def test_trusted_read_then_dangerous_call_allowed_in_paranoid():
+    # The tax win: reading a vetted source then acting is NOT over-gated.
+    s = _session(Strictness.PARANOID)
+    s.register_tool(classify_tool("internal_db", {"properties": {"query": {}}}))
+    s.register_tool(operator_profile(
+        "send_email", reversibility=Reversibility.IRREVERSIBLE, exfiltration_capable=True))
+    s.trust_tool("internal_db")
+    s.ingest_result("internal_db", "the quarterly number is 4.2M")
+    r = s.authorize_call("send_email", {"to": "me@co", "body": "FYI: 4.2M"})
+    assert r.decision is Decision.ALLOW
+
+
+def test_explicitly_untrusted_tool_taints():
+    s = _session(Strictness.PARANOID)
+    s.register_tool(classify_tool("crm_lookup", {"properties": {"id": {}}}))
+    s.set_tool_origin("crm_lookup", Origin.INBOUND_MESSAGE)  # attacker-reachable
+    s.ingest_result("crm_lookup", "note from customer")
+    assert s.is_tainted
+
+
+def test_origin_inferred_from_name_for_audit_label():
+    s = _session()
+    led = s.ledger
+    s.register_tool(classify_tool("read_inbox", {"properties": {"folder": {}}}))
+    s.ingest_result("read_inbox", "an email body")
+    labels = [e for e in led.sink.entries() if e["kind"] == "label"]
+    assert labels[-1]["origin"] == "INBOUND_MESSAGE"  # precise origin in the ledger
+
+
+def test_explicit_level_override():
+    s = _session()
+    s.register_tool(classify_tool("vault_read", {"properties": {"key": {}}}))
+    s.set_tool_origin("vault_read", Origin.VETTED_SYSTEM, level=TrustLevel.TRUSTED)
+    v = s.ingest_result("vault_read", "value")
+    assert v.level is TrustLevel.TRUSTED
 
 
 def test_untrusted_result_taints_session():
