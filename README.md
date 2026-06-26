@@ -252,6 +252,31 @@ Capabilities are **auto-derived from the plan**: each dangerous step with
 constant arguments gets a capability scoped to exactly those values, so least
 authority falls out of the plan for free.
 
+### The trusted planner
+
+The plan is emitted from the trusted query by a **planner** — an LLM in
+production. It can be trusted because it only ever sees the query and the tool
+list, never untrusted data. But "trusted" doesn't mean "believed blindly": the
+security boundary is the validator, [`parse_plan`](src/tessera/planner.py),
+which turns whatever the planner emits into the constrained DSL — known tools
+only, well-formed `const`/`var`/`field` expressions, no variable used before
+it's bound. The model chooses *which* allowed steps to run; it cannot emit
+arbitrary code, dangle a reference, or name a tool that wasn't offered.
+
+```python
+from tessera import ClaudePlanner, ScriptedPlanner, PlanInterpreter
+
+planner = ClaudePlanner(model="claude-opus-4-8")   # or ScriptedPlanner(plan_json) offline
+the_plan = planner.plan(user_query, tools)          # validated into a Plan
+PlanInterpreter(session, tool_backend).run(the_plan)
+```
+
+`python examples/planner_demo.py` runs the full loop (query → plan → validate →
+enforce) offline with a `ScriptedPlanner`; add `--live` with `ANTHROPIC_API_KEY`
+set to drive it with the real model. The Anthropic SDK is optional
+(`pip install "tessera-proxy[planner]"`); `parse_plan` and `ScriptedPlanner` work
+without it.
+
 ## Run inside AgentDojo
 
 [AgentDojo](https://github.com/ethz-spylab/agentdojo) is the standard
