@@ -77,6 +77,7 @@ from tessera.planner import (
 )
 from tessera.policy import Decision, PolicyEngine, PolicyResult, Strictness
 from tessera.provenance import LabeledValue, ProvenanceNode
+from tessera.sdk import Blocked, Guard, protect, tool
 from tessera.session import Session
 
 __version__ = "0.2.0"
@@ -84,6 +85,7 @@ __version__ = "0.2.0"
 __all__ = [
     "AllowlistDeclassifier",
     "BlastRadius",
+    "Blocked",
     "BooleanDeclassifier",
     "Capability",
     "CapabilityEngine",
@@ -93,6 +95,7 @@ __all__ = [
     "Declassifier",
     "DeclassifyOutcome",
     "EnumDeclassifier",
+    "Guard",
     "IntegerDeclassifier",
     "IsoDateDeclassifier",
     "LabeledValue",
@@ -131,7 +134,9 @@ __all__ = [
     "expires_at",
     "max_uses",
     "plan",
+    "protect",
     "step",
+    "tool",
     "tool_is",
     "var",
     "__version__",
