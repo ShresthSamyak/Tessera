@@ -56,6 +56,66 @@ def _import_agentdojo():
     }
 
 
+def _list_returning_tools(suite) -> set[str]:
+    tools = suite.tools.values() if hasattr(suite.tools, "values") else suite.tools
+    out = set()
+    for f in tools:
+        rt = str(getattr(f, "return_type", ""))
+        if rt.startswith("list") or "list[" in rt:
+            out.add(f.name)
+    return out
+
+
+def expressible_user_tasks(suite) -> tuple[list[str], list[str]]:
+    """Draw the coverage boundary: which user tasks the constrained plan DSL can
+    express *without iteration or indexing*.
+
+    A task is expressible iff its ground-truth call sequence is straight-line:
+    no function repeats (no looping over a list) AND no list-returning read
+    feeds a later consumer (no selecting/indexing an item out of a list). These
+    are exactly the two constructs the current DSL lacks; adding them would put
+    iteration/indexing into the security-boundary interpreter (a soundness cost,
+    not just effort — deferred, see HANDOFF §8). Returns (expressible_ids, all_ids).
+    """
+    env = suite.load_and_inject_default_environment({})
+    list_returning = _list_returning_tools(suite)
+    expressible, all_ids = [], []
+    for tid, task in suite.user_tasks.items():
+        all_ids.append(tid)
+        try:
+            funcs = [c.function for c in task.ground_truth(env)]
+        except Exception:
+            continue  # can't classify -> treat as not-expressible
+        repeated = len(funcs) != len(set(funcs))
+        seen_list = selection = False
+        for f in funcs:
+            if not seen_list and f in list_returning:
+                seen_list = True
+                continue
+            if seen_list and f not in list_returning:
+                selection = True
+                break
+        if not repeated and not selection:
+            expressible.append(tid)
+    return expressible, all_ids
+
+
+def print_coverage(ad) -> None:
+    print("Plan-DSL coverage of AgentDojo (no iteration/indexing):\n")
+    total_e = total_t = 0
+    for name in ("slack", "banking", "travel", "workspace"):
+        suite = ad["get_suite"](BENCHMARK_VERSION, name)
+        exp, allids = expressible_user_tasks(suite)
+        total_e += len(exp)
+        total_t += len(allids)
+        pct = 100 * len(exp) // len(allids) if allids else 0
+        print(f"  {name:10s} {len(exp):>2}/{len(allids):<2} ({pct:>2}%) expressible")
+    pct = 100 * total_e // total_t if total_t else 0
+    print(f"  {'TOTAL':10s} {total_e:>2}/{total_t:<2} ({pct}%)")
+    print("\nPoint plan-mode runs at high-coverage suites (travel/workspace);\n"
+          "run heuristic modes on the full slice. See HANDOFF section 7.")
+
+
 def build_pipeline(ad, model: str, strictness):
     """Build the AgentDojo pipeline, optionally with TesseraGuard inserted."""
     from tessera.policy import PolicyEngine
@@ -102,10 +162,15 @@ def main() -> None:
     ap.add_argument("--strictness", default="paranoid", choices=["paranoid", "balanced", "permissive"])
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--list", action="store_true", help="list suites/attacks and exit (no API calls)")
+    ap.add_argument("--coverage", action="store_true", help="show plan-DSL coverage of each suite and exit (no API calls)")
     args = ap.parse_args()
 
     ad = _import_agentdojo()
     from tessera.policy import Strictness
+
+    if args.coverage:
+        print_coverage(ad)
+        return
 
     if args.list:
         print("Suites:", list(ad["get_suites"](BENCHMARK_VERSION).keys()))

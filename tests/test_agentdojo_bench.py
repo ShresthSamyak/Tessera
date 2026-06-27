@@ -58,3 +58,25 @@ def test_guard_query_returns_gated_runtime_and_classifies():
     _q, wrapped, *_ = guard.query("do the task", rt)
     assert isinstance(wrapped, TesseraRuntime)
     assert len(guard.session.profiles) == len(rt.functions)
+
+
+def test_plan_dsl_coverage_boundary():
+    # The deliberate coverage boundary for Option B: which tasks the constrained
+    # DSL expresses without iteration/indexing. Pins the measured numbers so a
+    # DSL/classifier change that shifts coverage is caught.
+    import importlib.util
+    import pathlib
+
+    spec = importlib.util.spec_from_file_location(
+        "agentdojo_bench",
+        pathlib.Path(__file__).resolve().parents[1] / "examples" / "agentdojo_bench.py",
+    )
+    bench = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bench)
+
+    exp, allids = bench.expressible_user_tasks(get_suite(BENCH, "slack"))
+    assert len(allids) == 21 and len(exp) == 3      # iteration-heavy suite
+    exp_t, all_t = bench.expressible_user_tasks(get_suite(BENCH, "travel"))
+    assert len(all_t) == 20 and len(exp_t) == 16    # mostly straight-line
+    # expressible ids are a real subset, and stable
+    assert set(exp).issubset(set(allids))
