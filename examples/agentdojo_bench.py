@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import pathlib
+import tempfile
 
 DEFAULT_MODEL = "gpt-4o-mini-2024-07-18"
 BENCHMARK_VERSION = "v1.2.1"
@@ -39,6 +41,7 @@ def _import_agentdojo():
         from agentdojo.agent_pipeline import AgentPipeline, PipelineConfig
         from agentdojo.attacks.attack_registry import ATTACKS, load_attack
         from agentdojo.benchmark import aggregate_results, benchmark_suite_with_injections
+        from agentdojo.logging import OutputLogger
         from agentdojo.task_suite.load_suites import get_suite, get_suites
     except ImportError as exc:
         print("AgentDojo is not installed. Run:  pip install -e \".[agentdojo]\"")
@@ -51,9 +54,16 @@ def _import_agentdojo():
         "load_attack": load_attack,
         "aggregate_results": aggregate_results,
         "benchmark_suite_with_injections": benchmark_suite_with_injections,
+        "OutputLogger": OutputLogger,
         "get_suite": get_suite,
         "get_suites": get_suites,
     }
+
+
+def _safe(name: str) -> str:
+    """Make a string safe to use as a path component (AgentDojo logs by name)."""
+    import re
+    return re.sub(r'[:\\/*?"<>|]', "-", name)
 
 
 def _list_returning_tools(suite) -> set[str]:
@@ -128,9 +138,12 @@ def build_pipeline(ad, model: str, strictness):
     )
     pipe = ad["AgentPipeline"].from_config(cfg)
     if strictness is None:
-        pipe.name = f"baseline::{model}"
+        # NOTE: pipeline.name becomes a filesystem path in AgentDojo's logdir.
+        # Keep it path-safe (no ':' — illegal on Windows; AgentDojo only catches
+        # ValidationError/FileNotFoundError, not the resulting OSError).
+        pipe.name = f"baseline-{_safe(model)}"
         return pipe
-    pipe.name = f"tessera-{strictness.value}::{model}"
+    pipe.name = f"tessera-{strictness.value}-{_safe(model)}"
     # Fresh session per task (the benchmark reuses one pipeline across tasks).
     guard = TesseraGuard(
         session_factory=lambda: Session(policy=PolicyEngine(strictness=strictness))
@@ -141,14 +154,22 @@ def build_pipeline(ad, model: str, strictness):
 
 def evaluate(ad, pipe, suite, attack_name, user_tasks, injection_tasks, verbose):
     attack = ad["load_attack"](attack_name, suite, pipe)
-    results = ad["benchmark_suite_with_injections"](
-        pipe, suite, attack,
-        logdir=None, force_rerun=True,
-        user_tasks=user_tasks, injection_tasks=injection_tasks, verbose=verbose,
-    )
-    n = len(results.security_results)
-    util = ad["aggregate_results"]([results.utility_results]) if results.utility_results else 0.0
-    asr = ad["aggregate_results"]([results.security_results]) if n else 0.0
+    # AgentDojo's benchmark builds a TraceLogger that reads `Logger.get().logdir`
+    # from the ambient logging context; the default NullLogger has no logdir, so
+    # the call must run inside an OutputLogger context (with a real logdir).
+    logdir = pathlib.Path(tempfile.mkdtemp(prefix="tessera-agentdojo-"))
+    with ad["OutputLogger"](str(logdir)):
+        results = ad["benchmark_suite_with_injections"](
+            pipe, suite, attack,
+            logdir=logdir, force_rerun=True,
+            user_tasks=user_tasks, injection_tasks=injection_tasks, verbose=verbose,
+        )
+    # SuiteResults is a TypedDict (plain dict at runtime) -> subscript, not attr.
+    security = results["security_results"]
+    utility = results["utility_results"]
+    n = len(security)
+    util = ad["aggregate_results"]([utility]) if utility else 0.0
+    asr = ad["aggregate_results"]([security]) if n else 0.0
     return util, asr, n
 
 
