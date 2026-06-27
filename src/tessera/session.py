@@ -45,6 +45,13 @@ from tessera.sanitize import sanitize_value
 _MIN_TOKEN_LEN = 6
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_\-./:@+=?&%]+")
 _TRIM = ".,;:!?\"'`()[]{}<>"
+# Verbs signalling a tool READS data (its result may be attacker-reachable).
+# A dangerous tool WITHOUT one of these is a pure action whose result is just a
+# confirmation -> trusted, doesn't taint. Used by Session._infer_origin.
+_READ_VERB_HINTS = frozenset({
+    "read", "get", "list", "search", "fetch", "find", "view", "show", "browse",
+    "scrape", "crawl", "load", "download", "lookup", "query", "describe", "count",
+})
 
 
 def _significant_tokens(text: str) -> set[str]:
@@ -259,13 +266,21 @@ class Session:
         (:meth:`trust_tool` / :meth:`set_tool_origin`).
         """
         name = tool.lower()
-        if any(k in name for k in ("inbox", "email", "mail", "message", "dm")):
+        toks = set(re.split(r"[\s_\-./]+", name))
+        is_read = bool(toks & _READ_VERB_HINTS)
+        # A pure *action* tool (send/delete/pay/...) returns a confirmation, not
+        # attacker data — so its result is trusted and must NOT taint the
+        # session. Only tools that *read* an external surface return untrusted
+        # content. (Without this, every send/post taints the session and the
+        # next dangerous call is blocked in paranoid mode — pure over-tax.)
+        if not is_read and profile.is_dangerous:
+            return Origin.CONTROL_PLANE  # action confirmation -> TRUSTED
+        # Reads of attacker-reachable surfaces -> untrusted, with a precise label.
+        if any(k in name for k in ("inbox", "mail", "email", "message", "dm", "chat")):
             return Origin.INBOUND_MESSAGE
-        if profile.blast_radius.exfiltration_capable or any(
-            k in name for k in ("web", "url", "http", "fetch", "browse", "search", "page")
-        ):
+        if any(k in name for k in ("web", "url", "http", "fetch", "browse", "search", "page", "scrape", "crawl")):
             return Origin.WEB_CONTENT
-        if any(k in name for k in ("doc", "file", "pdf", "attachment", "upload", "download")):
+        if any(k in name for k in ("doc", "file", "pdf", "attachment", "download")):
             return Origin.DOCUMENT
         return Origin.TOOL_OUTPUT
 
