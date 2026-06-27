@@ -38,7 +38,7 @@ from tessera.labels import Origin, TrustLevel, combine
 from tessera.ledger import Ledger, open_ledger
 from tessera.policy import Decision, PolicyEngine, PolicyResult, Strictness
 from tessera.provenance import LabeledValue, ProvenanceGraph
-from tessera.sanitize import sanitize_markdown
+from tessera.sanitize import sanitize_value
 
 # Minimum length of a token we consider "significant" enough to track for
 # value-flow matching. Short common words would cause false positives.
@@ -217,14 +217,15 @@ class Session:
         else:
             resolved_level = resolved_origin.default_level
 
+        # Token extraction for value-flow taint uses the *original* serialized
+        # form (conservative — captures tokens even from URLs we strip).
         text = _stringify(content)
-        if isinstance(content, str):
-            san = sanitize_markdown(content, allowlist=self.allowlist)
-            if san.changed and self.ledger:
-                self.ledger.sanitize(tool, san.removed)
-            new_content: Any = san.text
-        else:
-            new_content = content  # preserve structure for field access
+        # Deep-sanitize the rendered content, preserving structure so the plan
+        # interpreter can still field-access it. Foreign objects (pydantic) pass
+        # through structurally intact but remain tainted via ``text`` above.
+        new_content, removed = sanitize_value(content, allowlist=self.allowlist)
+        if removed and self.ledger:
+            self.ledger.sanitize(tool, removed)
 
         value = LabeledValue.from_origin(
             new_content,

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 # ![alt](url "title")  -- markdown image; the dangerous one (auto-loads).
@@ -120,3 +121,37 @@ def sanitize_markdown(
 
     out = _BARE_URL_RE.sub(_bare, out)
     return SanitizeResult(text=out, removed=removed)
+
+
+def sanitize_value(
+    value: Any, *, allowlist: frozenset[str] | set[str] | None = None
+) -> tuple[Any, list[str]]:
+    """Deep-sanitize a (possibly structured) tool result, preserving shape.
+
+    Walks JSON-native containers (dict/list/tuple) and defangs every string
+    leaf via :func:`sanitize_markdown`, returning a new value of the same shape
+    plus the list of removed URLs. Structure is preserved on purpose: the plan
+    interpreter field-accesses structured results, so flattening them to one
+    string would break that (sound) path.
+
+    Foreign typed objects (e.g. Pydantic models) are returned unchanged — their
+    nested strings are not deep-sanitized here (a documented residual; they are
+    still *tainted* because the session extracts tokens from their serialized
+    form). Numbers/bools/None pass through.
+    """
+    removed: list[str] = []
+
+    def rec(v: Any) -> Any:
+        if isinstance(v, str):
+            r = sanitize_markdown(v, allowlist=allowlist)
+            removed.extend(r.removed)
+            return r.text
+        if isinstance(v, Mapping):
+            return {k: rec(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [rec(x) for x in v]
+        if isinstance(v, tuple):
+            return tuple(rec(x) for x in v)
+        return v
+
+    return rec(value), removed
