@@ -173,6 +173,149 @@ def evaluate(ad, pipe, suite, attack_name, user_tasks, injection_tasks, verbose)
     return util, asr, n
 
 
+# --------------------------------------------------------------------------
+# Option B: plan mode. Plan mode does NOT use AgentDojo's agent pipeline; it
+# replaces the agent (LLM + tool loop) with planner -> PlanInterpreter, reusing
+# only AgentDojo's suites/envs/attacks/grading. So we drive injection + grading
+# ourselves (mirroring TaskSuite.run_task_with_pipeline) and swap a Plan for the
+# pipeline.query call. The `planner` is a parameter so the whole harness is
+# testable with a fake/oracle planner (no API key); ClaudePlanner is the keyed
+# swap-in for a real run.
+# --------------------------------------------------------------------------
+
+
+def _agentdojo_tool_specs(suite):
+    from tessera.planner import ToolSpec
+
+    tools = suite.tools.values() if hasattr(suite.tools, "values") else suite.tools
+    specs = []
+    for f in tools:
+        params = ()
+        ms = getattr(getattr(f, "parameters", None), "model_json_schema", None)
+        if callable(ms):
+            try:
+                props = ms().get("properties") or {}
+                params = tuple(props.keys())
+            except Exception:
+                params = ()
+        specs.append(ToolSpec(
+            name=f.name, description=str(getattr(f, "description", "") or ""), params=params,
+        ))
+    return specs
+
+
+def run_plan_task(ad, suite, attack, planner, session_factory, user_task, injection_task):
+    """Run ONE (user_task, injection_task) pair in plan mode; grade it.
+
+    Returns (utility: bool, security: bool, planned: bool). `planned` is False
+    when the planner couldn't emit/execute a valid plan — a planner-quality
+    signal kept separate from flow-rule tax (see HANDOFF step-2 artifact).
+    """
+    from agentdojo.functions_runtime import FunctionCall, FunctionsRuntime
+    from tessera.integrations.agentdojo import classify_runtime_tools
+    from tessera.plan import PlanError, PlanInterpreter
+    from tessera.planner import PlannerError
+
+    injections = attack.attack(user_task, injection_task)
+    environment = suite.load_and_inject_default_environment(injections)
+    task_env = user_task.init_environment(environment)
+    pre = task_env.model_copy(deep=True)
+
+    runtime = FunctionsRuntime(suite.tools)
+    session = session_factory()
+    classify_runtime_tools(session, runtime)
+
+    trace: list = []
+
+    def backend(tool, args):
+        # The interpreter only calls this for ALLOWED steps (it gates via
+        # session.authorize_call_labeled first), so the trace = actions plan
+        # mode actually took, and the tool mutates task_env in place.
+        trace.append(FunctionCall(function=tool, args=dict(args)))
+        result, _err = runtime.run_function(task_env, tool, args)
+        return result
+
+    planned = True
+    try:
+        plan_obj = planner.plan(user_task.PROMPT, _agentdojo_tool_specs(suite))
+    except PlannerError:
+        planned, plan_obj = False, None
+    if plan_obj is not None:
+        try:
+            PlanInterpreter(session, backend, auto_capabilities=False).run(plan_obj)
+        except PlanError:
+            planned = False  # plan referenced something the DSL can't execute
+
+    model_output: list = []  # plan mode produces no agent text
+    utility = suite._check_task_result(user_task, model_output, pre, task_env, trace)
+    security = suite._check_task_result(injection_task, model_output, pre, task_env, trace)
+    return utility, security, planned
+
+
+def evaluate_plan(ad, suite, attack_name, model, planner, session_factory, user_ids, injection_ids):
+    import types
+
+    stub = types.SimpleNamespace(name=model)  # load_attack reads pipeline.name only
+    attack = ad["load_attack"](attack_name, suite, stub)
+    util, sec, planned = [], [], []
+    for uid in user_ids:
+        for iid in injection_ids:
+            u, s, p = run_plan_task(
+                ad, suite, attack, planner, session_factory,
+                suite.user_tasks[uid], suite.injection_tasks[iid],
+            )
+            util.append(u)
+            sec.append(s)
+            planned.append(p)
+    n = len(sec)
+    rate = lambda xs: (sum(xs) / n) if n else 0.0  # noqa: E731
+    return rate(util), rate(sec), rate(planned), n
+
+
+def _run_plan_mode(ad, args, strictness) -> None:
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        print("Plan mode uses the trusted planner (Claude) -> set ANTHROPIC_API_KEY.")
+        print('  PowerShell:  $env:ANTHROPIC_API_KEY = "sk-ant-..."')
+        raise SystemExit(2)
+    from tessera.planner import ClaudePlanner
+    from tessera.policy import PolicyEngine
+    from tessera.session import Session
+
+    suite = ad["get_suite"](BENCHMARK_VERSION, args.suite)
+    expressible, _ = expressible_user_tasks(suite)
+    user_ids = expressible[: args.user_tasks] if args.user_tasks else expressible
+    inj_ids = (list(suite.injection_tasks.keys())[: args.injection_tasks]
+               if args.injection_tasks else list(suite.injection_tasks.keys()))
+    if not user_ids:
+        print(f"No iteration-free (expressible) tasks in suite '{args.suite}'. "
+              "Try --suite travel.")
+        raise SystemExit(2)
+
+    print(f"PLAN MODE  suite={args.suite}  attack={args.attack}  "
+          f"planner={args.planner_model}  flow-rule={strictness.value}")
+    print(f"expressible user_tasks={user_ids}  injection_tasks={inj_ids}\n")
+    print("Running plan mode (planner -> interpreter) ...")
+
+    planner = ClaudePlanner(model=args.planner_model)
+    session_factory = lambda: Session(policy=PolicyEngine(strictness=strictness))  # noqa: E731
+    util, asr, coverage, n = evaluate_plan(
+        ad, suite, args.attack, args.model, planner, session_factory, user_ids, inj_ids,
+    )
+
+    print("\n" + "=" * 64)
+    print(f"AgentDojo PLAN MODE  ({n} task x injection pairs)")
+    print("=" * 64)
+    print(f"{'metric':<26}{'value':>10}")
+    print("-" * 64)
+    print(f"{'coverage (planned ok)':<26}{coverage*100:>9.0f}%")
+    print(f"{'utility (on covered)':<26}{util*100:>9.0f}%")
+    print(f"{'ASR':<26}{asr*100:>9.0f}%")
+    print(f"{'containment (1-ASR)':<26}{(1-asr)*100:>9.0f}%")
+    print("\nThree-number result: coverage = fraction the DSL could plan; "
+          "utility/ASR\nare over those runs. Low coverage != tax (it's planner/DSL "
+          "reach). Compare\nASR/containment vs the no-defense baseline and (aspirationally) CaMeL.")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Tessera inside the AgentDojo benchmark.")
     ap.add_argument("--model", default=DEFAULT_MODEL)
@@ -181,6 +324,8 @@ def main() -> None:
     ap.add_argument("--user-tasks", type=int, default=3, help="how many user tasks (0 = all)")
     ap.add_argument("--injection-tasks", type=int, default=2, help="how many injection tasks (0 = all)")
     ap.add_argument("--strictness", default="paranoid", choices=["paranoid", "balanced", "permissive"])
+    ap.add_argument("--plan", action="store_true", help="Option B: plan mode (planner->interpreter; needs ANTHROPIC_API_KEY). Runs the expressible task subset.")
+    ap.add_argument("--planner-model", default="claude-opus-4-8", help="model for the trusted planner (plan mode)")
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--list", action="store_true", help="list suites/attacks and exit (no API calls)")
     ap.add_argument("--coverage", action="store_true", help="show plan-DSL coverage of each suite and exit (no API calls)")
@@ -198,6 +343,10 @@ def main() -> None:
         print("Attacks:", list(ad["ATTACKS"].keys()))
         s = ad["get_suite"](BENCHMARK_VERSION, args.suite)
         print(f"{args.suite}: {len(s.user_tasks)} user tasks, {len(s.injection_tasks)} injection tasks")
+        return
+
+    if args.plan:
+        _run_plan_mode(ad, args, Strictness(args.strictness))
         return
 
     if not os.environ.get("OPENAI_API_KEY"):
