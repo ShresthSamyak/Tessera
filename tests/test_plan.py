@@ -112,6 +112,39 @@ def test_field_access_preserves_taint():
     assert run.outcomes[1].decision.decision is Decision.BLOCK
 
 
+def test_field_access_on_object_preserves_taint():
+    # AgentDojo (and many real tools) return typed objects, not dicts. Field
+    # extraction must work via attribute access AND keep the untrusted label so
+    # the flow rule still gates — this is the Option-B step-zero guarantee.
+    from types import SimpleNamespace
+
+    msg = SimpleNamespace(sender="attacker", body=INJECTED_DOC)
+    backend = Backend({"read_inbox": msg})
+    s = _session()
+    s.register_tool(classify_tool("read_inbox", {"properties": {"folder": {}}}))
+    interp = PlanInterpreter(s, backend)
+    run = interp.run(plan(
+        step(call("read_inbox", folder=const("inbox")), bind="m"),
+        step(call("send_email", to=const("bob@co.test"), body=field_of("m", "body"))),
+    ))
+    assert run.outcomes[1].decision.decision is Decision.BLOCK
+    assert backend.sent == []
+
+
+def test_field_access_missing_field_raises():
+    from types import SimpleNamespace
+
+    backend = Backend({"read_inbox": SimpleNamespace(body="x")})
+    s = _session()
+    s.register_tool(classify_tool("read_inbox", {"properties": {"folder": {}}}))
+    interp = PlanInterpreter(s, backend)
+    with pytest.raises(PlanError):
+        interp.run(plan(
+            step(call("read_inbox", folder=const("inbox")), bind="m"),
+            step(call("send_email", to=const("x"), body=field_of("m", "nonexistent"))),
+        ))
+
+
 def test_read_only_steps_always_run():
     backend = Backend({"read_doc": INJECTED_DOC, "search_docs": "results"})
     s = _session()

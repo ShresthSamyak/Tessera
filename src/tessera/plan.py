@@ -48,6 +48,26 @@ class PlanError(Exception):
     """A malformed plan (unbound variable, bad field access)."""
 
 
+_MISSING = object()
+
+
+def _read_field(container: Any, key: str) -> Any:
+    """Read field ``key`` from a structured value, returning ``_MISSING`` if absent.
+
+    Handles the shapes real tools return: a mapping (subscript), or an object
+    with attributes — e.g. a Pydantic model or dataclass, which is what
+    AgentDojo tools return (``Message``). Lists/strings have no named field, so
+    a name lookup on them is a miss (indexing a list of objects needs an index
+    the constrained DSL doesn't yet express — a documented limitation).
+    """
+    if isinstance(container, Mapping):
+        return container[key] if key in container else _MISSING
+    if isinstance(container, (str, bytes, list, tuple, set)):
+        return _MISSING
+    # Object attribute access (pydantic models, dataclasses, namespaces).
+    return getattr(container, key, _MISSING)
+
+
 # --------------------------------------------------------------------------
 # The constrained program: expressions, calls, steps, plan
 # --------------------------------------------------------------------------
@@ -226,13 +246,16 @@ class PlanInterpreter:
             if expr.var not in env:
                 raise PlanError(f"variable {expr.var!r} used before it was bound")
             base = env[expr.var]
-            try:
-                sub = base.content[expr.key]
-            except (KeyError, TypeError, IndexError) as exc:
+            sub = _read_field(base.content, expr.key)
+            if sub is _MISSING:
                 raise PlanError(
-                    f"cannot read field {expr.key!r} of {expr.var!r}: {exc}"
-                ) from None
-            # Field access preserves the parent's label (it is derived from it).
+                    f"cannot read field {expr.key!r} of {expr.var!r} "
+                    f"({type(base.content).__name__})"
+                )
+            # Field access preserves the parent's label (it is derived from it),
+            # so an extracted string from an untrusted structure stays untrusted
+            # and the flow rule gates on that label — independent of the field's
+            # *content* (which may not be deep-sanitized for foreign objects).
             return base.derive(sub, label=f"{expr.var}.{expr.key}")
         raise PlanError(f"unknown expression type: {expr!r}")
 
