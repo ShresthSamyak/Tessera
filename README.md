@@ -141,14 +141,42 @@ a valid capability **and** the provenance flow rule. See
 ## Quick start
 
 ```bash
-pip install -e .
+pip install tessera-proxy
+```
 
-# Run Tessera as a transparent proxy in front of any MCP server:
+**The front door — a transparent MCP proxy.** Drop Tessera in front of any MCP
+server. Your agent points at `tessera` instead of the upstream server; *nothing
+in the agent changes*, and every tool call is now governed by the flow rule:
+
+```bash
 tessera run --strictness balanced --ledger audit.jsonl -- python -m my_mcp_server
 ```
 
-The agent points at `tessera` instead of the upstream server; nothing else in
-the agent changes.
+**Or, in code — wrap any tools in one line.** Works with any framework
+(LangChain, the OpenAI/Anthropic SDKs, a hand-rolled loop) — these are the same
+callables, now gated:
+
+```python
+from tessera import protect
+
+safe_tools = protect([send_email, read_doc, fetch_url], policy="balanced")
+# untrusted data read by one tool can no longer drive an exfiltration-capable
+# or irreversible tool. A blocked call returns a message the agent can read.
+```
+
+Annotate the tools you define so Tessera knows their blast radius exactly:
+
+```python
+from tessera import tool
+
+@tool(reversibility="irreversible", exfiltration_capable=True)
+def send_email(to: str, body: str) -> str: ...
+```
+
+Both paths are the same engine — the proxy applies it on the wire, `protect`
+applies it in-process. `policy` is `"paranoid"` / `"balanced"` (default) /
+`"permissive"`. Configure trusted sources (`guard.trust("internal_db")`),
+declassifiers, and capabilities on the returned `Guard`.
 
 ## The strictness knob
 

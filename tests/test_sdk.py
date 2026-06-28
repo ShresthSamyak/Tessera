@@ -4,7 +4,7 @@ import pytest
 
 from tessera import Blocked, Guard, protect, tool
 from tessera.declassify import PatternDeclassifier
-from tessera.labels import Origin, TrustLevel
+from tessera.labels import Origin
 
 
 def _tools():
