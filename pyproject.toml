@@ -51,9 +51,9 @@ planner = ["anthropic>=0.40"]
 tessera = "tessera.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/tessera-security/tessera"
-Source = "https://github.com/tessera-security/tessera"
-Issues = "https://github.com/tessera-security/tessera/issues"
+Homepage = "https://tessera-phi.vercel.app"
+Source = "https://github.com/ShresthSamyak/Tessera"
+Issues = "https://github.com/ShresthSamyak/Tessera/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tessera"]

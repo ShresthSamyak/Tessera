@@ -2,6 +2,15 @@
 
 **A provenance control plane for tool-using agents.**
 
+[![PyPI](https://img.shields.io/pypi/v/tessera-proxy?color=2dd4bf&label=pypi)](https://pypi.org/project/tessera-proxy/)
+[![Python](https://img.shields.io/pypi/pyversions/tessera-proxy?color=2dd4bf)](https://pypi.org/project/tessera-proxy/)
+[![License](https://img.shields.io/badge/license-Apache--2.0-2dd4bf)](LICENSE)
+[![Website](https://img.shields.io/badge/website-tessera--phi.vercel.app-5ee9a4)](https://tessera-phi.vercel.app)
+
+**[Website](https://tessera-phi.vercel.app)** ·
+**[PyPI](https://pypi.org/project/tessera-proxy/)** (`pip install tessera-proxy`) ·
+**[Source](https://github.com/ShresthSamyak/Tessera)**
+
 Tessera is a security layer that sits between an agent and its tools (over
 [MCP](https://modelcontextprotocol.io)) and **contains the blast radius of a
 successful prompt injection** -- by tracking where every piece of data came
