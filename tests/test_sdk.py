@@ -68,14 +68,55 @@ def test_clean_send_allowed():
     assert sent == [("me@co", "lunch at noon")]
 
 
-# --- the over-taint fix: action results don't taint ----------------------
+# --- the over-taint fix: status confirmations don't taint ----------------
 
-def test_action_results_do_not_taint_in_paranoid():
-    send_email, read_doc, sent = _tools()
+def test_status_confirmation_results_do_not_taint_in_paranoid():
+    # A real action tool returns a *structured status confirmation*; that must
+    # NOT taint the session, or every send blocks the next dangerous call.
+    sent = []
+
+    @tool(reversibility="irreversible", exfiltration_capable=True)
+    def send_email(to, body):
+        sent.append((to, body))
+        return {"status": "sent", "id": "msg_001"}
+
     g = Guard.create(policy="paranoid", on_block="raise")
     ss = g.wrap(send_email)
     ss(to="bob", body="one")
     ss(to="bob", body="two")  # a prior send must NOT taint the next dangerous call
+    assert sent == [("bob", "one"), ("bob", "two")]
+
+
+def test_bare_string_action_result_taints_by_default():
+    # A bare string from an action tool is ambiguous (status word vs echoed
+    # content), so it is treated as content and DOES taint — fail closed.
+    sent = []
+
+    @tool(reversibility="irreversible", exfiltration_capable=True)
+    def send_email(to, body):
+        sent.append((to, body))
+        return "sent"  # bare string -> tainting
+
+    g = Guard.create(policy="paranoid", on_block="raise")
+    ss = g.wrap(send_email)
+    ss(to="bob", body="one")
+    with pytest.raises(Blocked):
+        ss(to="bob", body="two")  # prior bare-string result tainted the session
+
+
+def test_trust_tool_is_the_escape_hatch_for_string_action_tools():
+    # The operator opts a vetted string-returning action tool out of tainting.
+    sent = []
+
+    @tool(reversibility="irreversible", exfiltration_capable=True)
+    def send_email(to, body):
+        sent.append((to, body))
+        return "sent"
+
+    g = Guard.create(policy="paranoid", on_block="raise").trust("send_email")
+    ss = g.wrap(send_email)
+    ss(to="bob", body="one")
+    ss(to="bob", body="two")  # explicitly trusted -> no taint
     assert sent == [("bob", "one"), ("bob", "two")]
 
 

@@ -46,12 +46,50 @@ _MIN_TOKEN_LEN = 6
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_\-./:@+=?&%]+")
 _TRIM = ".,;:!?\"'`()[]{}<>"
 # Verbs signalling a tool READS data (its result may be attacker-reachable).
-# A dangerous tool WITHOUT one of these is a pure action whose result is just a
-# confirmation -> trusted, doesn't taint. Used by Session._infer_origin.
+# A dangerous tool WITHOUT one of these is a pure action whose result is
+# *usually* just a confirmation. Used by Session._is_read_tool.
 _READ_VERB_HINTS = frozenset({
     "read", "get", "list", "search", "fetch", "find", "view", "show", "browse",
     "scrape", "crawl", "load", "download", "lookup", "query", "describe", "count",
 })
+# Longest single-line string we'll accept as a *field* of a status/identifier
+# confirmation. A message id or status word is short; an echoed comment body,
+# ticket description, or quoted thread is not. Past this (or with any newline)
+# the value is treated as content, not a confirmation.
+_STATUS_STR_MAX = 200
+
+
+def _is_scalar_status_field(value: Any) -> bool:
+    """True if ``value`` is a scalar that could plausibly be a status/id field.
+
+    Numbers/booleans/None always qualify; a string qualifies only if it is
+    short and single-line (an identifier or status word, not a content blob).
+    """
+    if value is None or isinstance(value, (bool, int, float)):
+        return True
+    if isinstance(value, str):
+        return "\n" not in value and len(value) <= _STATUS_STR_MAX
+    return False
+
+
+def _is_status_shaped(content: Any) -> bool:
+    """Whether a value looks like a status/identifier confirmation.
+
+    A confirmation is a scalar (``"sent"`` is *not* — see below) or a mapping
+    whose every value is a short single-line scalar (``{"status": "sent",
+    "id": "msg_123"}``). A **bare string is deliberately NOT status-shaped**:
+    a top-level string from an action tool is ambiguous between a status word
+    and an echoed content payload, so we treat it as content and let it taint
+    (operators mark genuinely-safe string-returning action tools trusted via
+    :meth:`trust_tool`). Lists and long/multiline values are content too.
+    """
+    if content is None or isinstance(content, (bool, int, float)):
+        return True
+    if isinstance(content, Mapping):
+        return bool(content) and all(
+            _is_scalar_status_field(v) for v in content.values()
+        )
+    return False
 
 
 def _significant_tokens(text: str) -> set[str]:
@@ -212,11 +250,24 @@ class Session:
         limitation tracked for structured returns).
         """
         profile = self._profile_for(tool)
-        # Resolution order: explicit arg -> operator config -> name/blast-radius
-        # inference (conservative default).
-        resolved_origin = (
-            origin or self.tool_origins.get(tool) or self._infer_origin(tool, profile)
-        )
+        # Token extraction for value-flow taint uses the *original* serialized
+        # form (conservative — captures tokens even from URLs we strip). Needed
+        # up-front for the anti-laundering check below.
+        text = _stringify(content)
+        # Resolution order (note ``is not None``: Origin.USER_QUERY == 0 is
+        # falsy, so a truthiness test would silently drop an explicit override):
+        #   explicit arg
+        #   -> operator config (trust_tool / set_tool_origin)
+        #   -> trusted iff this is a *status confirmation* from an action tool
+        #   -> name/blast-radius inference (conservative default).
+        if origin is not None:
+            resolved_origin = origin
+        elif tool in self.tool_origins:
+            resolved_origin = self.tool_origins[tool]
+        elif self._is_trusted_action_confirmation(tool, profile, content, text):
+            resolved_origin = Origin.CONTROL_PLANE
+        else:
+            resolved_origin = self._infer_origin(tool, profile)
         if level is not None:
             resolved_level = level
         elif tool in self.tool_levels:
@@ -224,9 +275,6 @@ class Session:
         else:
             resolved_level = resolved_origin.default_level
 
-        # Token extraction for value-flow taint uses the *original* serialized
-        # form (conservative — captures tokens even from URLs we strip).
-        text = _stringify(content)
         # Deep-sanitize the rendered content, preserving structure so the plan
         # interpreter can still field-access it. Foreign objects (pydantic) pass
         # through structurally intact but remain tainted via ``text`` above.
@@ -257,24 +305,62 @@ class Session:
         return value
 
     @staticmethod
+    def _is_read_tool(tool: str) -> bool:
+        """Whether a tool's name signals it *reads* an external surface.
+
+        A read tool's result may carry attacker-reachable content; a pure
+        action tool's result is *usually* a confirmation. This only ever
+        *sharpens* a label or narrows the action-confirmation trust below — it
+        never on its own relaxes the gate.
+        """
+        toks = set(re.split(r"[\s_\-./]+", tool.lower()))
+        return bool(toks & _READ_VERB_HINTS)
+
+    def _is_trusted_action_confirmation(
+        self, tool: str, profile: ToolProfile, content: Any, text: str
+    ) -> bool:
+        """Whether a dangerous tool's *result* is a trusted status confirmation.
+
+        The over-tax fix (don't taint every send's confirmation, which would
+        block the next dangerous call in paranoid mode) must NOT become an
+        under-taint hole. Some "action" tools echo attacker-influenced content
+        back in their response — a ``post_comment`` that returns the rendered
+        comment, a ``create_ticket`` that echoes the body, a ``send_message``
+        that returns the thread including a third party's message. Trusting
+        those would *launder* untrusted data into a trusted label and let it
+        flow straight into the next exfiltration. So a result is trusted only
+        when it is BOTH:
+
+          * structurally a status/identifier confirmation (a scalar, or a
+            mapping of short single-line scalar fields) — see
+            :func:`_is_status_shaped`; a bare/long/multiline string is content,
+            and
+          * free of any already-tainted token (it is not re-introducing
+            untrusted material the session has already seen).
+
+        Everything else stays tainted (fail closed). An operator can still mark
+        a genuinely vetted string-returning action tool trusted explicitly via
+        :meth:`trust_tool`.
+        """
+        if not profile.is_dangerous or self._is_read_tool(tool):
+            return False
+        if not _is_status_shaped(content):
+            return False
+        # Anti-laundering: never promote a result carrying untrusted tokens.
+        return not (_significant_tokens(text) & self._tainted_tokens)
+
+    @staticmethod
     def _infer_origin(tool: str, profile: ToolProfile) -> Origin:
         """Guess a tool result's origin from its name and blast radius.
 
         Only sharpens the *label* (for the audit trail / HITL prompt) — every
-        case here is still untrusted-or-unverified, so it never relaxes the
-        gate. To mark a source *trusted*, an operator must say so explicitly
-        (:meth:`trust_tool` / :meth:`set_tool_origin`).
+        case here is untrusted-or-unverified, so it never relaxes the gate. To
+        mark a source *trusted*, an operator says so explicitly
+        (:meth:`trust_tool` / :meth:`set_tool_origin`), or a dangerous tool's
+        result is a status confirmation (:meth:`_is_trusted_action_confirmation`,
+        applied before this in :meth:`ingest_result`).
         """
         name = tool.lower()
-        toks = set(re.split(r"[\s_\-./]+", name))
-        is_read = bool(toks & _READ_VERB_HINTS)
-        # A pure *action* tool (send/delete/pay/...) returns a confirmation, not
-        # attacker data — so its result is trusted and must NOT taint the
-        # session. Only tools that *read* an external surface return untrusted
-        # content. (Without this, every send/post taints the session and the
-        # next dangerous call is blocked in paranoid mode — pure over-tax.)
-        if not is_read and profile.is_dangerous:
-            return Origin.CONTROL_PLANE  # action confirmation -> TRUSTED
         # Reads of attacker-reachable surfaces -> untrusted, with a precise label.
         if any(k in name for k in ("inbox", "mail", "email", "message", "dm", "chat")):
             return Origin.INBOUND_MESSAGE
