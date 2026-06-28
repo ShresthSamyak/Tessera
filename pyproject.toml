@@ -22,9 +22,17 @@ keywords = [
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
     "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
 ]
 # The v0.2 wedge core is pure stdlib. Keep runtime deps empty so the secure
 # path is trivial to adopt; transports/extras live behind optional groups.
@@ -45,9 +53,14 @@ tessera = "tessera.cli:main"
 [project.urls]
 Homepage = "https://github.com/tessera-security/tessera"
 Source = "https://github.com/tessera-security/tessera"
+Issues = "https://github.com/tessera-security/tessera/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tessera"]
+
+[tool.hatch.build.targets.sdist]
+# Ship the source the tests need so the sdist is self-checking.
+include = ["src/tessera", "tests", "README.md", "LICENSE", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
