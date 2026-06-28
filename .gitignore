@@ -23,6 +23,9 @@ ledger.jsonl
 # Working state / scratch context — never commit
 HANDOFF.md
 
+# Marketing website (Next.js) — descriptive only, never part of the package repo
+website/
+
 # Editor / OS
 .idea/
 .vscode/
