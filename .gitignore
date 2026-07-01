@@ -26,6 +26,9 @@ HANDOFF.md
 # Marketing website (Next.js) — descriptive only, never part of the package repo
 website/
 
+# Launch drafts — working copy, not a repo artifact
+LAUNCH.md
+
 # Editor / OS
 .idea/
 .vscode/
