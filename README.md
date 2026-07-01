@@ -93,10 +93,12 @@ honesty -- so here is the straight version before you adopt it.
 **The security guarantee is real and verified.** The flow rule works
 mechanically: untrusted data cannot reach an exfiltration-capable or
 irreversible tool argument without passing a declassifier or a human. That is
-covered by 230+ tests (including the laundering paths), and on
-[AgentDojo](https://github.com/ethz-spylab/agentdojo) -- the standard
-third-party prompt-injection benchmark -- Tessera drove attack success rate to
-**0%** on the slices we ran (details [below](#the-evidence-agentdojo)).
+covered by 230+ tests (including the laundering paths) and by the built-in
+frontier, where **plan mode contains 100% of the attacks with no
+over-tainting** (details [below](#the-evidence)). Third-party validation on
+[AgentDojo](https://github.com/ethz-spylab/agentdojo) is in progress and is the
+next external-credibility step -- see [the evidence](#the-evidence) for exactly
+what has and hasn't been measured there.
 
 **The usability cost is significant, and not yet validated in the wild.**
 Containing those attacks also blocked a large fraction of *legitimate* work in
@@ -178,36 +180,15 @@ It also ships an **ergonomic SDK** (`protect` / `@tool` / `Guard`), a
 **capability engine**, and a **plan interpreter** (below). Auto-policy DSL, HITL
 UX, and the anomaly net are v0.4+.
 
-## The evidence (AgentDojo)
+## The evidence
 
 A security tool is easy to fake: block everything and you "contain" every
 attack. The real question is containment *without* breaking legitimate work --
-so the numbers below report **both**.
+so every number here reports **both**.
 
-On [AgentDojo](https://github.com/ethz-spylab/agentdojo)'s `slack` suite
-(`important_instructions` attack, `gpt-4o-mini`, a small slice of 6 task x
-injection pairs), Tessera as a pipeline guard:
-
-| config             | utility (legit task success) | ASR (attack success) | containment |
-| ------------------ | ---------------------------- | -------------------- | ----------- |
-| no defense         | 100%                         | 67%                  | 33%         |
-| **tessera/paranoid** | **33%**                    | **0%**               | **100%**    |
-| no defense         | 83%                          | 83%                  | 17%         |
-| **tessera/balanced** | **33%**                    | **0%**               | **100%**    |
-
-Read both columns honestly: **containment goes to 100% (ASR 0%)**, and that is
-real -- the attacks that leaked under no defense are stopped. But **utility
-drops to 33%**: containing the attacks also broke roughly two-thirds of the
-honest tasks in this slice. That gap is the tax, and closing it is the work.
-These are small slices on one suite, not a full sweep -- treat them as
-directional, not a leaderboard claim. Reproduce them yourself
-[below](#run-it-yourself-inside-agentdojo).
-
-### Where the tax goes: the built-in frontier
-
-Tessera's own `tessera bench` runs a synthetic suite (5 injection attacks, 3
-benign workflows) across strictness settings, which shows *why* the tax exists
-and how plan mode removes most of it:
+**The headline result: the built-in frontier.** Tessera's own `tessera bench`
+runs a suite of 5 injection attacks and 3 benign workflows across strictness
+settings:
 
 | mode         | containment | utility tax | escalations |
 | ------------ | ----------- | ----------- | ----------- |
@@ -219,9 +200,28 @@ and how plan mode removes most of it:
 `balanced` value-flow matching catches literal exfiltration cheaply but is
 **evaded by the data-laundering attack** (the payload paraphrased through the
 model); `paranoid` context-taint contains laundering too, but **over-taints**
-benign work. The **`plan`** row Pareto-dominates both -- full containment at the
-*lower* tax, because precise provenance means no over-tainting. That is the
-direction the project is pushing: keep the guarantee, drop the tax.
+benign work. The **`plan`** row (the [plan
+interpreter](#the-plan-interpreter-containment-by-construction))
+**Pareto-dominates** both -- full containment at the *lower* tax, because precise
+provenance means no over-tainting. That is the direction the project is pushing:
+keep the guarantee, drop the tax.
+
+### Third-party validation (AgentDojo): in progress, honestly scoped
+
+[AgentDojo](https://github.com/ethz-spylab/agentdojo) is the standard external
+prompt-injection benchmark (the one [CaMeL](https://arxiv.org/abs/2503.18813)
+reported on), and a fair comparison is *plan mode vs. AgentDojo*, since CaMeL is
+itself a plan-based defense. That run -- the travel suite (Tessera's
+best-covered) in plan mode -- is the **next external-credibility step**, and it
+is not done yet.
+
+What *has* run is a small, preliminary slice with the **heuristic** path (not
+plan mode) on the `slack` suite (Tessera's *worst*-covered), N=6 pairs. It
+confirmed containment (ASR -> 0%) but at a heavy utility cost, on the wrong path
+and the hardest terrain -- so we deliberately **do not headline it**; it is
+directional plumbing-verification only. We would rather ship without a
+third-party number than ship a misleading one. Reproduce any of this yourself
+[below](#run-it-yourself-inside-agentdojo).
 
 ## The strictness knob
 
@@ -446,7 +446,7 @@ exfiltration and irreversible actions, and making every action's provenance
 auditable. **Out of scope:** preventing prompt injection in-band; covert
 channels through tool timing or side effects remain acknowledged residual risk.
 **Known cost:** legitimate-task tax in the strict modes (see
-[the evidence](#the-evidence-agentdojo)) -- reducing it, especially via plan
+[the evidence](#the-evidence)) -- reducing it, especially via plan
 mode, is the active work.
 
 ## License
