@@ -279,8 +279,6 @@ class Session:
         # interpreter can still field-access it. Foreign objects (pydantic) pass
         # through structurally intact but remain tainted via ``text`` above.
         new_content, removed = sanitize_value(content, allowlist=self.allowlist)
-        if removed and self.ledger:
-            self.ledger.sanitize(tool, removed)
 
         value = LabeledValue.from_origin(
             new_content,
@@ -295,6 +293,8 @@ class Session:
             self.context_level = combine(self.context_level, resolved_level)
             self._tainted_tokens.update(_significant_tokens(text))
 
+        # Ledger order mirrors the logical order: first we *label* where the
+        # result came from, then we record any sanitization we applied to it.
         if self.ledger:
             self.ledger.label(
                 tool=tool,
@@ -302,6 +302,8 @@ class Session:
                 origin=resolved_origin.name,
                 node_id=value.node.node_id,
             )
+            if removed:
+                self.ledger.sanitize(tool, removed)
         return value
 
     @staticmethod

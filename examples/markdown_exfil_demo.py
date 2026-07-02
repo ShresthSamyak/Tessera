@@ -20,10 +20,35 @@ trail showing exactly why Tessera refused.
 
 from __future__ import annotations
 
+import builtins
+import sys
+import time
+
 from tessera.ledger import open_ledger
 from tessera.policy import PolicyEngine, Strictness
 from tessera.proxy import MCPInterceptor
 from tessera.session import Session
+
+# --- optional presentation pacing (for screen recordings) -----------------
+# `python examples/markdown_exfil_demo.py --slow` streams the output line by
+# line and beats between sections, so a recording reads as a story instead of a
+# wall of text appearing at once. Without the flag, behaviour is unchanged.
+_SLOW = "--slow" in sys.argv
+_LINE_DELAY = 0.05 if _SLOW else 0.0
+
+
+def print(*args, **kwargs):  # noqa: A001 - shadow builtin to pace output
+    builtins.print(*args, **kwargs)
+    if _LINE_DELAY:
+        sys.stdout.flush()
+        time.sleep(_LINE_DELAY)
+
+
+def _pause(seconds: float) -> None:
+    """A dramatic beat between acts — only when --slow is on."""
+    if _SLOW:
+        time.sleep(seconds)
+
 
 SECRET = "sk-live-9f83AKQ7-DO-NOT-LEAK"
 ATTACKER = "exfil@evil.test"
@@ -168,6 +193,7 @@ def run_tessera() -> None:
 
 def main() -> None:
     run_vanilla()
+    _pause(1.6)  # let "Game over" land before the reversal
     run_tessera()
 
 

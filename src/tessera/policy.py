@@ -165,8 +165,9 @@ class PolicyEngine:
         if irreversible:
             why.append("irreversible")
         danger = " and ".join(why)
+        article = "an" if danger[:1].lower() in "aeiou" else "a"
         base = (
-            f"untrusted data would flow into a {danger} tool without a "
+            f"untrusted data would flow into {article} {danger} tool without a "
             "declassifier or approval"
         )
 
