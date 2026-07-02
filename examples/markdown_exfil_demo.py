@@ -178,7 +178,7 @@ def run_tessera() -> None:
     for entry in ledger.sink.entries():  # type: ignore[attr-defined]
         kind = entry["kind"]
         if kind == "label":
-            print(f"  [label]    {entry['tool']} -> {entry['level']} ({entry['origin']})")
+            print(f"  [label]    {entry['tool']}() result -> {entry['level']} ({entry['origin']})")
         elif kind == "sanitize":
             print(f"  [sanitize] {entry['tool']} removed {len(entry['removed'])} url(s): {entry['removed']}")
         elif kind == "decision":
