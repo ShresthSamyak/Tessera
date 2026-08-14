@@ -34,7 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Union
 
-from tessera.capabilities import arg_equals, tool_is
+from tessera.capabilities import arg_equals, max_uses, tool_is
 from tessera.labels import Origin
 from tessera.policy import Decision, PolicyResult
 from tessera.provenance import LabeledValue
@@ -262,6 +262,17 @@ class PlanInterpreter:
     # -- capability auto-derivation ----------------------------------------
 
     def _derive_capabilities(self, the_plan: Plan) -> None:
+        """Mint least authority for the plan: one grant per dangerous step.
+
+        A plan step executes exactly once, so a grant that authorizes unlimited
+        calls is broader than the plan needs. Bounding it is where the
+        :attr:`~tessera.classification.BlastRadius.idempotent` axis earns its
+        keep: repeating a *non-idempotent* tool causes **additional effect**, so
+        its grant is capped at a single use — an injection that induces the same
+        planned call fifty times finds authority for one. An idempotent tool is
+        left uncapped, because by definition the repeat changes nothing (and a
+        cap would only add retry friction with no containment gain).
+        """
         engine = self.session.capability_engine
         assert engine is not None
         for a_step in the_plan.steps:
@@ -272,4 +283,7 @@ class PlanInterpreter:
             for name, expr in a_step.call.args.items():
                 if isinstance(expr, Const):
                     caveats.append(arg_equals(name, expr.value))
+            if not profile.blast_radius.idempotent:
+                # One grant per step, so N identical steps still get N uses.
+                caveats.append(max_uses(1))
             self.session.grant(engine.mint(*caveats))

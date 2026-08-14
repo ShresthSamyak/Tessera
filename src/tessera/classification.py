@@ -45,6 +45,15 @@ class BlastRadius:
 
     reversibility: Reversibility
     exfiltration_capable: bool
+    #: Does repeating the call cause *additional* effect? This axis does **not**
+    #: feed the flow rule — that keys only on :attr:`is_dangerous`, and whether a
+    #: first call is safe has nothing to do with whether a second one is. It
+    #: governs *how much authority a call needs*: the plan interpreter caps a
+    #: non-idempotent dangerous step's derived capability at one use
+    #: (``PlanInterpreter._derive_capabilities``), so a replay needs fresh
+    #: authority. Outside plan mode nothing derives capabilities automatically,
+    #: so there it is recorded in the ledger and available to operators minting
+    #: their own grants — see the note in :mod:`tessera.policy`.
     idempotent: bool
 
     @property
@@ -54,6 +63,9 @@ class BlastRadius:
         Dangerous == can leak data outward OR can cause an unrecoverable
         effect. Read-only, non-exfiltrating tools are safe to drive with
         untrusted data and stay fully dynamic.
+
+        Note that ``idempotent`` is deliberately absent here: a repeatable tool
+        is not thereby safe, and a one-shot tool is not thereby dangerous.
         """
         return self.exfiltration_capable or (
             self.reversibility is Reversibility.IRREVERSIBLE

@@ -19,6 +19,15 @@ dynamism<->containment frontier — the knob whose curve is the whole pitch. It
 does not change the rule; it changes how the trust level of a call's arguments
 is *determined* upstream (see :mod:`tessera.session`) and whether an
 ambiguous-but-irreversible action blocks outright or routes to a human.
+
+Deliberately *not* consulted here: the blast radius's third axis, ``idempotent``.
+That is not an oversight. The flow rule answers "may this data drive this call?",
+and a tool being repeatable says nothing about it — the first call is exactly as
+dangerous either way. Idempotency answers a different question, "how much
+authority does this call need?", so it is enforced in the capability gate
+instead: the plan interpreter caps a non-idempotent dangerous step's derived
+grant at a single use, which is what stops an injection amplifying one planned
+action into fifty. See :meth:`tessera.plan.PlanInterpreter._derive_capabilities`.
 """
 
 from __future__ import annotations
