@@ -303,6 +303,28 @@ def test_two_identical_non_idempotent_steps_both_execute():
     assert [a["body"] for a in backend.sent] == ["one", "two"]
 
 
+def test_flow_rule_block_still_spends_the_use_budget():
+    """Documented interaction, pinned so it stays a decision not an accident.
+
+    The capability gate runs *before* the flow rule, so an attempted dangerous
+    call spends a use even when the flow rule then blocks it. That errs closed
+    (a later call is denied, never wrongly allowed).
+    """
+    s = _cap_session()
+    backend = Backend({"read_doc": INJECTED_DOC})
+    run = PlanInterpreter(s, backend, auto_capabilities=True).run(plan(
+        step(call("read_doc", doc_id=const("q3")), bind="doc"),
+        step(call("send_email", to=const("bob@co.test"), body=var("doc"))),
+    ))
+    assert not run.outcomes[1].executed  # blocked by the flow rule, not the cap
+    assert backend.sent == []
+
+    # The budget was spent by the attempt, so a later clean send is denied too.
+    later = s.authorize_call("send_email", {"to": "bob@co.test", "body": "clean"})
+    assert later.decision is Decision.BLOCK
+    assert "1/1" in later.reason
+
+
 def test_use_cap_does_not_gate_a_safe_tool():
     s = _cap_session()
     PlanInterpreter(s, Backend({"read_doc": "fine"}), auto_capabilities=True).run(plan(

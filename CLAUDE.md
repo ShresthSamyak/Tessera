@@ -18,7 +18,7 @@ that way; anything needing a third-party lib goes behind an optional extra and m
 
 ```bash
 pip install -e ".[dev]"          # dev install (pytest is the only dev dep)
-pytest                           # run the suite (252 tests; -q is the default via pyproject)
+pytest                           # run the suite (259 tests; -q is the default via pyproject)
 pytest tests/test_policy.py      # one file
 pytest tests/test_session.py -k value_flow   # one test by name substring
 pytest -q tests/test_plan.py::test_name      # one exact test
@@ -52,7 +52,9 @@ Trust flows through these modules in order — to change behavior you usually to
    we can't positively vouch for).
 2. **`classification.py`** — `classify_tool(name, schema, description)` infers a `BlastRadius`
    (reversibility, exfiltration_capable, idempotent) purely from the MCP schema. A tool is **dangerous**
-   iff exfiltration-capable **or** irreversible; only dangerous tools are ever gated. The heuristic is
+   iff exfiltration-capable **or** irreversible; only dangerous tools are ever gated. `idempotent` is
+   deliberately **not** part of `is_dangerous` and never reaches the flow rule — it governs *how much
+   authority* a call needs, and is enforced in the capability gate (see the plan path below). The heuristic is
    deliberately **cautious**: unknown/ambiguous tools default to a reversible write, never read-only.
 3. **`session.py`** — the orchestrator and the taint state. `ingest_result()` labels + taints + sanitizes
    an incoming result; `authorize_call()` / `authorize_call_labeled()` gate an outgoing call. This is where
@@ -94,7 +96,11 @@ launder a payload. `session.py` handles this two ways, selected by `Strictness`:
   exactly the plan's steps, so an injection can't add a step; (2) **precise provenance** — every value's
   label is known exactly, so `authorize_call_labeled` gates only args that *actually* carry untrusted data
   (no over-tainting → lower tax at full containment; the `plan` row Pareto-dominates in `tessera bench`).
-  Capabilities are **auto-derived** from constant-arg dangerous steps.
+  Capabilities are **auto-derived** from constant-arg dangerous steps, and a **non-idempotent** dangerous
+  step is capped at `max_uses(1)` — a step runs once, so a replay needs fresh authority. This is what stops
+  an injection amplifying one planned action into fifty when the args are clean and the flow rule is silent.
+  Gotcha: the capability gate runs *before* the flow rule, so a flow-rule-blocked call still spends a use
+  (errs closed; pinned by `test_flow_rule_block_still_spends_the_use_budget`).
 
 ### The two membranes that let untrusted data through safely
 

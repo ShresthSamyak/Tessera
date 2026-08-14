@@ -469,7 +469,17 @@ class Session:
     def _check_capability(
         self, tool: str, args: Mapping[str, Any] | Any
     ) -> CapabilityResult:
-        """Find a granted capability that authorizes this call (least authority)."""
+        """Find a granted capability that authorizes this call (least authority).
+
+        Note the ordering consequence: this runs as gate 1, so a use is spent
+        even if gate 2 (the flow rule) then blocks the call. A finite
+        ``max_uses`` budget is therefore consumed by *attempted* dangerous
+        calls, not just executed ones — which errs closed (later calls are
+        denied, never wrongly allowed) and is the deliberate choice for now.
+        Consuming only on a final ALLOW is ambiguous for ESCALATE, where the
+        session never learns whether the human approved; that is tracked as a
+        separate decision rather than changed silently here.
+        """
         engine = self.capability_engine
         assert engine is not None
         call_args = args if isinstance(args, Mapping) else {}
