@@ -394,7 +394,12 @@ Two guarantees, both stronger than heuristic taint tracking:
 
 Capabilities are **auto-derived from the plan**: each dangerous step with
 constant arguments gets a capability scoped to exactly those values, so least
-authority falls out of the plan for free.
+authority falls out of the plan for free. A plan step also runs exactly *once*,
+so a dangerous step whose tool is **non-idempotent** — one where a repeat causes
+additional effect — is capped at a single use. An injection that induces the
+same planned `transfer_money` fifty times finds authority for one, even though
+the arguments are clean constants the flow rule has no objection to. Idempotent
+tools are left uncapped, since by definition the repeat changes nothing.
 
 ### The trusted planner
 
