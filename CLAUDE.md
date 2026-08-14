@@ -18,7 +18,7 @@ that way; anything needing a third-party lib goes behind an optional extra and m
 
 ```bash
 pip install -e ".[dev]"          # dev install (pytest is the only dev dep)
-pytest                           # run the suite (259 tests; -q is the default via pyproject)
+pytest                           # run the suite (279 tests; -q is the default via pyproject)
 pytest tests/test_policy.py      # one file
 pytest tests/test_session.py -k value_flow   # one test by name substring
 pytest -q tests/test_plan.py::test_name      # one exact test
@@ -63,7 +63,11 @@ Trust flows through these modules in order — to change behavior you usually to
    returning ALLOW / BLOCK / ESCALATE. Strictness does **not** change the rule; it changes how BALANCED vs
    PARANOID vs PERMISSIVE respond to untrusted-data-into-dangerous-tool.
 5. **`sanitize.py`** — strips exfil channels (notably markdown-image URLs) from rendered output; runs
-   inside `ingest_result`.
+   inside `ingest_result`. `sanitize_value` walks containers **and typed objects** (dataclass, pydantic,
+   namespace, `__slots__`) because that is what real tools return — objects are *copied, not mutated*, and
+   only rebuilt when something was actually stripped. Anything it cannot inspect or rebuild is appended to
+   the `unsanitized` out-list and logged as a `sanitize_gap` ledger entry, so the residual is auditable.
+   Callers must return `labeled.content`, never the raw result, or the defanging is discarded.
 6. **`ledger.py`** — append-only JSONL audit trail. Every label, sanitize, declassify, capability check,
    and decision is recorded, in logical order. Entries are **hash-chained** (`prev_hash`/`hash`, same
    construction as the capability macaroons), optionally keyed via HMAC; `verify_ledger()` /
