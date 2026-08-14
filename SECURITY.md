@@ -60,6 +60,11 @@ in scope:
   that survives sanitization.
 - **Audit-ledger integrity.** Tampering with, or forging entries in, the
   append-only ledger such that a gated decision is not faithfully recorded.
+  Entries are hash-chained and checked by `tessera verify`; a mutation that
+  leaves the chain verifying is in scope. The documented limits are **not**:
+  rewriting an *unkeyed* chain end-to-end (use `--ledger-key-env`, with the
+  verifier's key held off the agent host), and dropping trailing entries
+  (detectable only against an externally-recorded `--expected-head`).
 
 ## What is out of scope (by design, not by omission)
 

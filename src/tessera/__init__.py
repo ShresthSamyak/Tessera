@@ -51,6 +51,15 @@ from tessera.declassify import (
     PatternDeclassifier,
 )
 from tessera.labels import Origin, TrustLevel
+from tessera.ledger import (
+    GENESIS_HASH,
+    Ledger,
+    LedgerEntry,
+    LedgerVerification,
+    open_ledger,
+    verify_chain,
+    verify_ledger,
+)
 from tessera.plan import (
     Call,
     Const,
@@ -95,10 +104,14 @@ __all__ = [
     "Declassifier",
     "DeclassifyOutcome",
     "EnumDeclassifier",
+    "GENESIS_HASH",
     "Guard",
     "IntegerDeclassifier",
     "IsoDateDeclassifier",
     "LabeledValue",
+    "Ledger",
+    "LedgerEntry",
+    "LedgerVerification",
     "NumberDeclassifier",
     "Call",
     "Const",
@@ -133,11 +146,14 @@ __all__ = [
     "const",
     "expires_at",
     "max_uses",
+    "open_ledger",
     "plan",
     "protect",
     "step",
     "tool",
     "tool_is",
     "var",
+    "verify_chain",
+    "verify_ledger",
     "__version__",
 ]

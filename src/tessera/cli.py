@@ -10,6 +10,7 @@ Everything after ``--`` is the command used to launch the upstream server.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from typing import Optional, Sequence
 
@@ -65,6 +66,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="How to resolve escalations (default: deny, i.e. fail closed).",
     )
     run.add_argument(
+        "--ledger-key-env",
+        metavar="VAR",
+        default=None,
+        help="Env var holding the key to HMAC-chain the ledger with. Only adds "
+        "tamper-resistance if the verifier's key is not readable from here.",
+    )
+    run.add_argument(
         "upstream",
         nargs=argparse.REMAINDER,
         help="-- followed by the command that launches the upstream server.",
@@ -79,11 +87,47 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show the per-scenario outcome for each strictness setting.",
     )
+
+    verify = sub.add_parser(
+        "verify",
+        help="Check an audit ledger's hash chain for tampering.",
+    )
+    verify.add_argument("path", help="Path to the ledger JSONL file.")
+    verify.add_argument(
+        "--key-env",
+        metavar="VAR",
+        default=None,
+        help="Env var holding the HMAC key the ledger was written with.",
+    )
+    verify.add_argument(
+        "--expected-head",
+        metavar="HASH",
+        default=None,
+        help="Externally-anchored hash of the last entry. Without it, a "
+        "truncated tail cannot be detected.",
+    )
     return parser
 
 
 def _clean_upstream(argv: list[str]) -> list[str]:
     return [a for a in argv if a != "--"]
+
+
+def _key_from_env(
+    var: Optional[str], parser: argparse.ArgumentParser
+) -> Optional[bytes]:
+    """Read an HMAC key from an environment variable (never from a flag).
+
+    Taken as the raw UTF-8 bytes of the value, so ``openssl rand -hex 32``
+    output works directly. A key on the command line would land in shell
+    history and the process table, so it is deliberately not accepted there.
+    """
+    if var is None:
+        return None
+    value = os.environ.get(var)
+    if not value:
+        parser.error(f"environment variable {var!r} is unset or empty")
+    return value.encode("utf-8")
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -100,9 +144,29 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             ledger_path=args.ledger,
             allowlist=frozenset(h.lower() for h in args.allow_host),
             hitl=_console_hitl if args.approve == "console" else None,
+            ledger_key=_key_from_env(args.ledger_key_env, parser),
         )
         proxy.run()
         return 0
+
+    if args.command == "verify":
+        from tessera.ledger import verify_ledger
+
+        result = verify_ledger(
+            args.path,
+            hmac_key=_key_from_env(args.key_env, parser),
+            expected_head=args.expected_head,
+        )
+        print(result.describe())
+        if result.ok:
+            print(f"head: {result.head}")
+            if args.expected_head is None:
+                print(
+                    "note: a hash chain cannot detect a truncated tail. Record "
+                    "the head above and pass it as --expected-head to close that gap."
+                )
+            return 0
+        return 1
 
     if args.command == "bench":
         from tessera.eval.harness import evaluate_frontier, format_frontier

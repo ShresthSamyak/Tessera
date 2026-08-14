@@ -214,9 +214,14 @@ class StdioProxy:
     allowlist: frozenset[str] = frozenset()
     hitl: Optional[HitlCallback] = None
     session_id: str = "stdio"
+    #: Optional key to HMAC-chain the ledger with, making tampering detectable
+    #: by a verifier that holds the key (see :func:`tessera.verify_ledger`).
+    ledger_key: Optional[bytes] = None
 
     def _build_session(self) -> Session:
-        ledger = open_ledger(self.ledger_path, session_id=self.session_id)
+        ledger = open_ledger(
+            self.ledger_path, session_id=self.session_id, hmac_key=self.ledger_key
+        )
         return Session(
             session_id=self.session_id,
             policy=PolicyEngine(strictness=self.strictness),
