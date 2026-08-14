@@ -217,6 +217,100 @@ def test_without_capability_derivation_dangerous_call_blocked():
     assert not run.completed  # no capability granted -> blocked
 
 
+# --- Idempotency -> replay protection --------------------------------------
+#
+# A plan step runs once, so its derived grant should authorize one call. For a
+# non-idempotent tool a replay causes ADDITIONAL effect, which is the whole
+# reason the blast radius tracks the axis. These pin that it is load-bearing.
+
+def _cap_session(**kw):
+    engine = CapabilityEngine(root_key=b"test-root-key-32-bytes-long!!!!!")
+    s = _session(
+        Strictness.BALANCED,
+        capability_engine=engine,
+        require_capabilities=True,
+        **kw,
+    )
+    # Dangerous (exfiltration-capable) but repeating it changes nothing.
+    s.register_tool(operator_profile(
+        "set_label",
+        reversibility=Reversibility.REVERSIBLE,
+        exfiltration_capable=True,
+        idempotent=True,
+    ))
+    return s
+
+
+def _caveat_kinds(cap):
+    return [c.kind for c in cap.caveats]
+
+
+def test_non_idempotent_step_grant_is_capped_at_one_use():
+    s = _cap_session()
+    PlanInterpreter(s, Backend(), auto_capabilities=True).run(plan(
+        step(call("send_email", to=const("bob@co.test"), body=const("hi"))),
+    ))
+    [cap] = s._granted
+    assert "max_uses" in _caveat_kinds(cap)
+    assert next(c for c in cap.caveats if c.kind == "max_uses").get("n") == 1
+
+
+def test_idempotent_step_grant_is_not_use_capped():
+    """A repeat changes nothing, so a cap would be friction with no gain."""
+    s = _cap_session()
+    PlanInterpreter(s, Backend(), auto_capabilities=True).run(plan(
+        step(call("set_label", msg=const("m1"), label=const("done"))),
+    ))
+    [cap] = s._granted
+    assert "max_uses" not in _caveat_kinds(cap)
+
+
+def test_replaying_a_non_idempotent_planned_call_is_denied():
+    """The containment win: one planned action cannot become fifty."""
+    s = _cap_session()
+    backend = Backend()
+    run = PlanInterpreter(s, backend, auto_capabilities=True).run(plan(
+        step(call("send_email", to=const("bob@co.test"), body=const("hi"))),
+    ))
+    assert run.completed and len(backend.sent) == 1
+
+    # An injection induces the very same call again, with identical (clean)
+    # arguments -- so the flow rule has no objection. Least authority does.
+    repeat = s.authorize_call("send_email", {"to": "bob@co.test", "body": "hi"})
+    assert repeat.decision is Decision.BLOCK
+    assert "capability" in repeat.reason
+    assert "1/1" in repeat.reason  # the use budget, not a provenance objection
+
+
+def test_replaying_an_idempotent_planned_call_is_allowed():
+    s = _cap_session()
+    PlanInterpreter(s, Backend(), auto_capabilities=True).run(plan(
+        step(call("set_label", msg=const("m1"), label=const("done"))),
+    ))
+    repeat = s.authorize_call("set_label", {"msg": "m1", "label": "done"})
+    assert repeat.decision is Decision.ALLOW
+
+
+def test_two_identical_non_idempotent_steps_both_execute():
+    """One grant per step -- capping uses must not break a repeating plan."""
+    s = _cap_session()
+    backend = Backend()
+    run = PlanInterpreter(s, backend, auto_capabilities=True).run(plan(
+        step(call("send_email", to=const("bob@co.test"), body=const("one"))),
+        step(call("send_email", to=const("bob@co.test"), body=const("two"))),
+    ))
+    assert run.completed
+    assert [a["body"] for a in backend.sent] == ["one", "two"]
+
+
+def test_use_cap_does_not_gate_a_safe_tool():
+    s = _cap_session()
+    PlanInterpreter(s, Backend({"read_doc": "fine"}), auto_capabilities=True).run(plan(
+        step(call("read_doc", doc_id=const("q3")), bind="doc"),
+    ))
+    assert s._granted == []  # safe tools need no capability at all
+
+
 # --- Robustness ------------------------------------------------------------
 
 def test_unbound_variable_raises():
