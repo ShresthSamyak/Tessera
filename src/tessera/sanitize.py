@@ -18,10 +18,20 @@ channels through timing or side effects remain acknowledged residual risk.
 
 from __future__ import annotations
 
+import copy
+import dataclasses
 import re
+import sys
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Mapping
 from urllib.parse import urlsplit
+
+#: Module roots whose types cannot carry a rendered markdown URL. Used only to
+#: keep the "could not inspect this" warning quiet about ``datetime``, ``UUID``,
+#: ``Path`` and friends. ``sys.stdlib_module_names`` exists on 3.10+, which is
+#: this package's floor.
+_STDLIB_ROOTS = frozenset(getattr(sys, "stdlib_module_names", ())) | {"builtins"}
 
 # ![alt](url "title")  -- markdown image; the dangerous one (auto-loads).
 _IMAGE_RE = re.compile(r"!\[(?P<alt>[^\]]*)\]\((?P<url>[^)\s]+)(?:\s+\"[^\"]*\")?\)")
@@ -147,9 +157,20 @@ def _walkable_fields(v: Any) -> dict[str, Any] | None:
             if hasattr(v, f.name)
         }
     d = getattr(v, "__dict__", None)
-    if isinstance(d, dict) and d:
-        return dict(d)
-    return None
+    readable = isinstance(d, dict)
+    found: dict[str, Any] = dict(d) if readable else {}
+    # __slots__ classes have no instance __dict__, so vars() sees nothing. Read
+    # the slot names off the MRO instead, or their strings would slip through.
+    for klass in type(v).__mro__:
+        declared = klass.__dict__.get("__slots__")
+        if isinstance(declared, str):
+            declared = (declared,)
+        for name in declared or ():
+            if name not in ("__dict__", "__weakref__") and hasattr(v, name):
+                found.setdefault(name, getattr(v, name))
+    # An empty but *readable* __dict__ means the object genuinely holds no
+    # state — that is inspected-and-clean, not a gap, so don't report it.
+    return found if (found or readable) else None
 
 
 def _rebuild(v: Any, changes: dict[str, Any]) -> Any | None:
