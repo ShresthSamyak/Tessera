@@ -170,8 +170,10 @@ A provenance-tracking MCP proxy that:
    ([`tessera.policy`](src/tessera/policy.py)),
 5. **sanitizes** rendered output to close the markdown-image exfil channel
    ([`tessera.sanitize`](src/tessera/sanitize.py)),
-6. writes an **append-only audit ledger** of every label and decision
-   ([`tessera.ledger`](src/tessera/ledger.py)), and
+6. writes an **append-only, hash-chained audit ledger** of every label and
+   decision ([`tessera.ledger`](src/tessera/ledger.py)) -- each entry commits to
+   the one before it, so `tessera verify audit.jsonl` detects any entry that was
+   edited, deleted, or reordered after the fact, and
 7. applies **declassifiers** -- the Membrane -- so untrusted data can pass into
    a dangerous tool through a narrow, constrained bottleneck
    ([`tessera.declassify`](src/tessera/declassify.py)).
@@ -305,6 +307,34 @@ caveats, so it is unforgeable without the root key, attenuation needs no secret,
 and you can only ever *add* restrictions. Both gates apply to a dangerous call:
 a valid capability **and** the provenance flow rule. See
 `python examples/capability_demo.py`.
+
+## A tamper-evident audit trail
+
+The ledger is what makes an incident reconstructable and a human approval
+meaningful -- so "append-only because our writer only appends" isn't enough. It
+says nothing about the file *afterwards*. Entries are **hash-chained** (the same
+construction as the capability macaroons): each entry commits to the one before
+it, so editing, deleting, or reordering any past entry breaks every hash after
+it.
+
+```bash
+tessera run --strictness balanced --ledger audit.jsonl -- python -m my_mcp_server
+tessera verify audit.jsonl        # exit 0 = intact; 1 = reports the first break
+```
+
+```text
+ledger BROKEN at line 2 (seq 2): hash does not match the entry's contents
+                                 -- this entry was modified after it was written
+```
+
+The honest scope, since an audit trail that overstates its own integrity is
+worse than one that doesn't try:
+
+| | Detected? |
+| --- | --- |
+| An entry edited, deleted, or reordered | **Yes** -- the chain breaks at that entry |
+| The whole file rewritten and re-chained | Only when **keyed** (`--ledger-key-env`), and only if the verifier's key isn't readable from the agent host |
+| The last *k* entries dropped (truncation) | Only against an **external anchor**: record `Ledger.head` elsewhere and pass `--expected-head` |
 
 ## Trust origins (don't over-taint vetted sources)
 
