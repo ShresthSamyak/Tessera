@@ -276,9 +276,14 @@ class Session:
             resolved_level = resolved_origin.default_level
 
         # Deep-sanitize the rendered content, preserving structure so the plan
-        # interpreter can still field-access it. Foreign objects (pydantic) pass
-        # through structurally intact but remain tainted via ``text`` above.
-        new_content, removed = sanitize_value(content, allowlist=self.allowlist)
+        # interpreter can still field-access it. Typed objects (dataclasses,
+        # pydantic models, namespaces) are walked and rebuilt too; anything we
+        # could not inspect is collected so the gap is auditable rather than
+        # silent.
+        unsanitized: list[str] = []
+        new_content, removed = sanitize_value(
+            content, allowlist=self.allowlist, unsanitized=unsanitized
+        )
 
         value = LabeledValue.from_origin(
             new_content,
@@ -304,6 +309,10 @@ class Session:
             )
             if removed:
                 self.ledger.sanitize(tool, removed)
+            if unsanitized:
+                # Not a failure of the flow rule (the value is still tainted
+                # and gated), but the rendered channel is not closed for it.
+                self.ledger.sanitize_gap(tool, unsanitized)
         return value
 
     @staticmethod

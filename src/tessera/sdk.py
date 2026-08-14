@@ -147,7 +147,12 @@ class Guard:
             else:
                 result = fn(*args, **kwargs)
             labeled = self.session.ingest_result(tool_name, result)
-            return labeled.content if isinstance(result, str) else result
+            # Return the *sanitized* value whatever its shape. This used to be
+            # strings only, back when sanitization could not reach inside a
+            # dict/object — handing the caller the original now would throw
+            # away the defanging and reopen the rendered-exfil channel for
+            # every structured return.
+            return labeled.content
 
         gated._tessera_name = tool_name  # type: ignore[attr-defined]
         return gated
