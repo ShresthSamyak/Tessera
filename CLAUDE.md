@@ -37,10 +37,10 @@ pyright                          # type-check (config in pyrightconfig.json; bas
 tessera run --strictness balanced --ledger audit.jsonl -- python -m my_mcp_server   # the proxy
 tessera bench --detail           # print the containment/utility-tax frontier table
 tessera verify audit.jsonl       # check the ledger's hash chain (exit 1 = tampered)
-python -m build && twine check dist/*   # package build (release flow)
+python -m build && twine check dist/*   # package build -- but release from a clean venv, below
 ```
 
-Two things that will otherwise waste your time:
+Three things that will otherwise waste your time:
 
 - **`pytest -v` does nothing.** `addopts = "-q"` in `pyproject.toml` is prepended to your flags, so the two
   cancel out. Use `pytest -o addopts="" -v` when you need per-test output.
@@ -48,6 +48,29 @@ Two things that will otherwise waste your time:
   `tests/` and `examples/` (mostly `Ledger.sink` being typed as the `LedgerSink` protocol while tests call
   the `MemorySink`-only `.entries()`). Compare against the count before your change rather than assuming
   zero; `src/` is what should stay clean.
+- **Never release from a shared/base environment.** `twine` resolves distribution metadata through
+  `pkginfo`, and current `hatchling` emits `Metadata-Version: 2.5` — a `pkginfo` older than that fails the
+  upload with `'2.5' is not a valid metadata version`. Chasing it by upgrading in a general-purpose env is
+  a trap: the newest `python-semantic-release` pins `rich~=14`, older ones pin `twine<4`, and you end up
+  trading the release toolchain against unrelated packages. Use a throwaway venv (below), where nothing
+  else has an opinion.
+
+### Release flow
+
+Build and upload from a disposable venv so the base environment cannot constrain the toolchain:
+
+```bash
+python -m venv .release-venv                     # git-ignored; throw it away afterwards
+.release-venv/Scripts/python -m pip install -U build twine   # Scripts/ on Windows, bin/ elsewhere
+.release-venv/Scripts/python -m build
+.release-venv/Scripts/python -m twine check dist/*
+.release-venv/Scripts/python -m twine upload dist/*          # __token__ + a pypi-… API token
+```
+
+Before uploading, **install the built wheel in a clean venv and exercise it** — `twine check` only
+validates metadata, not that the artifact contains the fix you are shipping. Version must already be
+bumped in *both* places (see Conventions), because PyPI versions are immutable. TestPyPI is a separate
+service with its own account and token; a PyPI token there returns 403.
 
 Runnable demos live in `examples/` and double as executable documentation of each subsystem
 (`markdown_exfil_demo.py`, `declassifier_demo.py`, `declassifier_soundness_demo.py`, `plan_demo.py`,
