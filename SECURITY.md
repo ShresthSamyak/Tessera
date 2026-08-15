@@ -89,6 +89,15 @@ avoid.
   utility tax; `paranoid` and the plan interpreter are the sound modes. A
   laundering evasion of `balanced` is expected; the same evasion of `paranoid`
   is in scope.
+- **Short all-letter secrets in value-flow modes.** `balanced` / `permissive`
+  track a token by length (6+) or by secret-*shape* (4+ characters, all digits
+  or letters-and-digits mixed -- so OTPs, PINs, short ids and key fragments are
+  tracked). A secret that is both **shorter than 6 characters and pure
+  letters** is indistinguishable from ordinary prose by shape, and tracking it
+  would gate on any argument quoting a common word. That one is a known
+  residual of value-flow mode, not a bug -- use `paranoid` or plan mode, whose
+  containment does not depend on token matching at all. A short **numeric or
+  alphanumeric** secret flowing unflagged *is* in scope.
 - **Covert channels via tool timing or side effects.** Acknowledged residual
   risk, documented in the README's scope section.
 - **Misconfiguration.** Marking an attacker-reachable source as

@@ -1,3 +1,5 @@
+import pytest
+
 from tessera.classification import classify_tool, operator_profile, Reversibility
 from tessera.declassify import EnumDeclassifier, PatternDeclassifier
 from tessera.labels import Origin, TrustLevel
@@ -102,6 +104,56 @@ def test_value_flow_allows_when_no_untrusted_material_in_args():
     # Email composed only from clean material -> not gated.
     r = s.authorize_call("send_email", {"to": "a@b.test", "body": "Meeting at noon"})
     assert r.decision is Decision.ALLOW
+
+
+# --- short secrets under the word-token floor (issue #2) -------------------
+
+def test_value_flow_blocks_a_short_one_time_code():
+    """The reported gap: a 5-digit OTP is under _MIN_TOKEN_LEN but is a secret."""
+    s = _session(Strictness.BALANCED)
+    s.register_tool(classify_tool("read_web", {"properties": {"url": {}}}))
+    s.register_tool(operator_profile(
+        "send", reversibility=Reversibility.IRREVERSIBLE, exfiltration_capable=True))
+    s.set_tool_origin("read_web", Origin.WEB_CONTENT)
+    s.ingest_result("read_web", "the one-time code is 12345 and the token is ABCDEF")
+    assert s.authorize_call("send", {"body": "12345"}).decision is Decision.BLOCK
+    assert s.authorize_call("send", {"body": "ABCDEF"}).decision is Decision.BLOCK
+
+
+def test_short_prose_words_still_do_not_taint():
+    """The floor's original job: short words must not gate ordinary arguments.
+
+    This is the regression that would make BALANCED unusable, so it is pinned
+    alongside the fix rather than left to the bench's tax number.
+    """
+    s = _session(Strictness.BALANCED)
+    s.register_tool(classify_tool("read_web", {"properties": {"url": {}}}))
+    s.register_tool(operator_profile(
+        "send", reversibility=Reversibility.IRREVERSIBLE, exfiltration_capable=True))
+    s.set_tool_origin("read_web", Origin.WEB_CONTENT)
+    s.ingest_result("read_web", "please reply to the order and note the code")
+    r = s.authorize_call("send", {"body": "I will reply to the order and note the code"})
+    assert r.decision is Decision.ALLOW
+
+
+@pytest.mark.parametrize(
+    "token,tracked",
+    [
+        ("12345", True),    # 5-digit OTP
+        ("4417", True),     # 4-digit PIN -- the shape floor
+        ("417", False),     # 3 digits: too common to match on
+        ("a3f9", True),     # short hex/key fragment
+        ("x7k2", True),     # letters + digits
+        ("beef", False),    # all letters, and an English word
+        ("order", False),   # ordinary prose under the length floor
+        ("ABCDEF", True),   # at the length floor, no digits needed
+        ("²²²²", False),  # non-ASCII "digits" are not an OTP
+    ],
+)
+def test_token_shape_decides_what_short_tokens_are_tracked(token, tracked):
+    from tessera.session import _significant_tokens
+
+    assert (token in _significant_tokens(f"value is {token} here")) is tracked
 
 
 def test_paranoid_blocks_dangerous_call_after_any_untrusted_read():

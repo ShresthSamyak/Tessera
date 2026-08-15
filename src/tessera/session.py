@@ -40,9 +40,17 @@ from tessera.policy import Decision, PolicyEngine, PolicyResult, Strictness
 from tessera.provenance import LabeledValue, ProvenanceGraph
 from tessera.sanitize import sanitize_value
 
-# Minimum length of a token we consider "significant" enough to track for
-# value-flow matching. Short common words would cause false positives.
+# Minimum length of a *word-like* token we consider "significant" enough to
+# track for value-flow matching. Short common words would cause false positives:
+# matching is a substring test, so tracking "the" would gate essentially every
+# call and make BALANCED unusable.
 _MIN_TOKEN_LEN = 6
+# ...but length alone let short *secrets* through unwatched — an OTP, a PIN, a
+# short account id are under the floor and are exactly the values worth
+# exfiltrating. A shorter token is still tracked when its **shape** says
+# "data, not word" (see _looks_secretish). This is the floor for that path;
+# below 4 characters even a digit run is too common to match on.
+_MIN_SECRETISH_LEN = 4
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_\-./:@+=?&%]+")
 _TRIM = ".,;:!?\"'`()[]{}<>"
 # Verbs signalling a tool READS data (its result may be attacker-reachable).
@@ -92,18 +100,56 @@ def _is_status_shaped(content: Any) -> bool:
     return False
 
 
+def _looks_secretish(tok: str) -> bool:
+    """True if a *short* token's shape marks it as data rather than a word.
+
+    ``_MIN_TOKEN_LEN`` exists to stop common words tainting every call, but a
+    pure length floor silently exempts the short high-value secrets — one-time
+    codes, PINs, short account/ticket ids, key fragments. Shape is the
+    discriminator length cannot give us:
+
+    - **all digits** (``"12345"``) — an OTP, PIN or numeric id. No English word
+      is all digits, so this is close to false-positive-free apart from bare
+      years and counts.
+    - **letters and digits together** (``"a3f9"``, ``"x7k2"``) — a key fragment
+      or hex id. Words do not carry digits.
+
+    A short run of *pure letters* is deliberately **not** secret-ish: ``"token"``,
+    ``"order"``, ``"reply"`` are ordinary prose, and tracking them would gate on
+    any argument quoting them. That is the documented residual — a short
+    all-letter secret still needs PARANOID or plan mode.
+
+    ASCII-only on purpose: ``str.isdigit()`` is true for characters like ``²``,
+    and a non-ASCII "digit" run is not the OTP shape this is reaching for.
+    """
+    if len(tok) < _MIN_SECRETISH_LEN or not tok.isascii():
+        return False
+    if tok.isdigit():
+        return True
+    return (
+        tok.isalnum()
+        and any(c.isdigit() for c in tok)
+        and any(c.isalpha() for c in tok)
+    )
+
+
 def _significant_tokens(text: str) -> set[str]:
-    """Extract normalized tokens long enough to be a meaningful data fragment.
+    """Extract normalized tokens worth tracking as a data fragment.
 
     Used symmetrically on untrusted results and on proposed-call arguments:
     a non-empty intersection means untrusted material is literally flowing into
     the call. Tokens are trimmed of surrounding punctuation so that
     ``SECRET998877.`` (sentence-final) matches ``SECRET998877`` in an argument.
+
+    A token qualifies by **length** (``_MIN_TOKEN_LEN``, the word-like path) or
+    by **shape** (:func:`_looks_secretish`, the short-secret path) — length
+    alone used to let a 5-digit one-time code flow straight into an
+    exfiltration-capable argument unflagged.
     """
     out: set[str] = set()
     for match in _TOKEN_RE.findall(text):
         tok = match.strip(_TRIM)
-        if len(tok) >= _MIN_TOKEN_LEN:
+        if len(tok) >= _MIN_TOKEN_LEN or _looks_secretish(tok):
             out.add(tok)
     return out
 
