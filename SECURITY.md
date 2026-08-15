@@ -47,6 +47,17 @@ in scope:
   untrusted data as trusted without an explicit operator `trust_tool` /
   declassifier -- e.g. an action tool whose confirmation echoes attacker content
   back as "trusted" (the class fixed in the action-confirmation soundness work).
+  This covers attacker content appearing for the **first** time in a status
+  field, not only content the session has already seen: an action tool's result
+  is promoted only when every key and value is identifier-shaped (no
+  whitespace, no `@`, no `/`, at most 64 characters), so free-form prose in a
+  status field is a reportable bug. The **documented limit**: an
+  identifier-shaped string can still be attacker-influenced -- a
+  server-generated slug derived from an attacker-supplied title. Shape is a
+  utility-tax heuristic, not a soundness mechanism, and `paranoid` / plan mode
+  do not rely on it at all. A report that prose, an address, a URL, or a long
+  value was promoted is in scope; "a 30-character attacker-chosen slug was
+  promoted" is the known boundary.
 - **Declassifier soundness failure.** A built-in declassifier whose output space
   is actually attacker-influenced (i.e. it launders), or a bypass of the
   construction-time probe guard.
