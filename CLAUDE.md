@@ -11,17 +11,26 @@ in-band (conceded unsolvable); it enforces one rule mechanically:
 > Data that originated **untrusted** may not become an argument to an **exfiltration-capable or
 > irreversible** tool without passing a **declassifier** or **human approval**.
 
-Read `README.md` for the full pitch and threat model. The v0.2 "wedge" core is **pure stdlib** — keep it
-that way; anything needing a third-party lib goes behind an optional extra and must import without it.
+Read `README.md` for the full pitch and threat model. `SECURITY.md` is the authoritative in-scope /
+out-of-scope list — it defines what the project *claims*, so a change to `sanitize.py`,
+`classification.py`, `declassify.py`, or the ledger's integrity story usually needs a matching edit there.
+
+The v0.2 "wedge" core is **pure stdlib** — keep it that way; anything needing a third-party lib goes
+behind an optional extra (`[agentdojo]`, `[planner]`) and the module must still import without it.
+**The floor is Python 3.10** (`requires-python`, and `pyrightconfig.json` pins `pythonVersion: "3.10"`),
+so nothing from 3.11+ — no `Self`, `StrEnum`, `tomllib`, `ExceptionGroup`. Every implementation module
+opens with `from __future__ import annotations` (the three `__init__.py` re-export shims don't need it),
+which is what keeps `X | Y` annotations legal on 3.10.
 
 ## Commands
 
 ```bash
 pip install -e ".[dev]"          # dev install (pytest is the only dev dep)
-pytest                           # run the suite (279 tests; -q is the default via pyproject)
+pytest                           # run the suite
 pytest tests/test_policy.py      # one file
 pytest tests/test_session.py -k value_flow   # one test by name substring
-pytest -q tests/test_plan.py::test_name      # one exact test
+pytest tests/test_plan.py::test_name         # one exact test
+pytest -o addopts="" -v          # verbose — see the gotcha below
 
 pyright                          # type-check (config in pyrightconfig.json; basic mode, py.typed shipped)
 
@@ -31,9 +40,20 @@ tessera verify audit.jsonl       # check the ledger's hash chain (exit 1 = tampe
 python -m build && twine check dist/*   # package build (release flow)
 ```
 
+Two things that will otherwise waste your time:
+
+- **`pytest -v` does nothing.** `addopts = "-q"` in `pyproject.toml` is prepended to your flags, so the two
+  cancel out. Use `pytest -o addopts="" -v` when you need per-test output.
+- **`pyright` is not clean and is not expected to be.** It reports a standing set of errors confined to
+  `tests/` and `examples/` (mostly `Ledger.sink` being typed as the `LedgerSink` protocol while tests call
+  the `MemorySink`-only `.entries()`). Compare against the count before your change rather than assuming
+  zero; `src/` is what should stay clean.
+
 Runnable demos live in `examples/` and double as executable documentation of each subsystem
-(`markdown_exfil_demo.py`, `declassifier_soundness_demo.py`, `plan_demo.py`, `planner_demo.py`,
-`capability_demo.py`, …). `examples/agentdojo_bench.py` needs `pip install ".[agentdojo]"` and an API key.
+(`markdown_exfil_demo.py`, `declassifier_demo.py`, `declassifier_soundness_demo.py`, `plan_demo.py`,
+`planner_demo.py`, `capability_demo.py`, `benchmark_demo.py`). `examples/agentdojo_bench.py` needs
+`pip install ".[agentdojo]"` and an API key; `planner_demo.py` needs `pip install ".[planner]"` (the
+Anthropic SDK) unless you drive it with `ScriptedPlanner` or an injected client.
 
 ## Architecture
 
@@ -67,7 +87,7 @@ Trust flows through these modules in order — to change behavior you usually to
    namespace, `__slots__`) because that is what real tools return — objects are *copied, not mutated*, and
    only rebuilt when something was actually stripped. Anything it cannot inspect or rebuild is appended to
    the `unsanitized` out-list and logged as a `sanitize_gap` ledger entry, so the residual is auditable.
-   Callers must return `labeled.content`, never the raw result, or the defanging is discarded.
+   None of that helps unless the call site returns `labeled.content` — see the invariant below.
 6. **`ledger.py`** — append-only JSONL audit trail. Every label, sanitize, declassify, capability check,
    and decision is recorded, in logical order. Entries are **hash-chained** (`prev_hash`/`hash`, same
    construction as the capability macaroons), optionally keyed via HMAC; `verify_ledger()` /
@@ -132,6 +152,11 @@ without the `agentdojo` dep. `eval/` holds the built-in `tessera bench` frontier
   (`_is_trusted_action_confirmation` — a status/id record that re-introduces **no already-tainted token**).
 - **Origin resolution uses `is not None`, not truthiness.** `Origin.USER_QUERY == 0` is falsy; a truthiness
   test would silently drop an explicit override. Watch this when editing `ingest_result`.
+- **Every `ingest_result` call site returns `labeled.content`, never the raw result** — otherwise the
+  sanitization is computed and then thrown away. This is a *call-site* rule, so it breaks silently and no
+  sanitizer test catches it. It already bit `sdk.py` and `integrations/agentdojo.py`, which both guarded on
+  `isinstance(result, str)` back when only strings could be sanitized; when `sanitize_value` learned to walk
+  typed objects, those guards became the bug. Never reintroduce a type check on the way out.
 - **The security boundary in plan mode is `parse_plan` (`planner.py`)**, not the planner. The planner (an
   LLM) is trusted only because it sees just the query + tool list; `parse_plan` is what validates its output
   into the DSL (known tools only, well-formed exprs, no use-before-bind). Treat it as the trust boundary.
