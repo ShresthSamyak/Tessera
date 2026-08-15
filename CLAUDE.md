@@ -103,8 +103,17 @@ launder a payload. `session.py` handles this two ways, selected by `Strictness`:
 - **`PARANOID`** → *context taint*: once any untrusted value enters the session, every subsequent dangerous
   call is treated as untrusted-driven until a declassifier clears it. Sound (laundering-proof), high tax.
 - **`BALANCED` / `PERMISSIVE`** → *value-flow matching*: a call is gated only if an argument's text
-  literally contains a tracked untrusted token (`_significant_tokens`, min length 6). Lower tax, but
+  literally contains a tracked untrusted token (`_significant_tokens`). Lower tax, but
   evadable by laundering — which is exactly what declassifiers and PARANOID exist for.
+
+  What counts as a *tracked token* is the whole tax/containment lever here, and it is **two rules, not
+  one**. Length (`_MIN_TOKEN_LEN = 6`) admits word-like tokens; matching is a substring test, so a floor
+  is what stops `"the"` gating every call. But length alone silently exempted the short **secrets** —
+  OTPs, PINs, short ids — so `_looks_secretish` also admits a short token by *shape*: all-digits, or
+  letters-and-digits mixed, at `_MIN_SECRETISH_LEN = 4` or longer. Known residual: a short **all-letter**
+  secret is still untracked in value-flow mode (it is indistinguishable from prose) — that needs PARANOID
+  or plan mode. If you touch either floor, re-run `tessera bench` — the utility tax is the thing you are
+  trading against, and `short-secret-exfil` is the scenario that pins the shape path.
 
 ### Three ways the same engine is applied
 
