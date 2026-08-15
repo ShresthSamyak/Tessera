@@ -19,6 +19,7 @@ separately, since "how often is a human bothered" is its own metric.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 
 from tessera.eval.scenarios import Scenario, default_scenarios
@@ -46,7 +47,15 @@ class RecordingServer:
             name = str(params.get("name", ""))
             args = params.get("arguments", {})
             self.executed.append((name, args))
-            text = self._scenario.results.get(name, "ok")
+            result = self._scenario.results.get(name, "ok")
+            # A scenario may script a *structured* return (a status mapping).
+            # MCP carries results as text content blocks, so the wire path
+            # serializes it here exactly as a real server would — which is why
+            # the proxy sees a string and the in-process/plan paths see the
+            # object. That difference is real, not an artifact of the harness.
+            text = result if isinstance(result, str) else json.dumps(
+                result, ensure_ascii=False, sort_keys=True
+            )
             return {
                 "jsonrpc": "2.0",
                 "id": id_,

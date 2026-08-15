@@ -72,8 +72,12 @@ class Scenario:
     kind: Literal["attack", "benign"]
     description: str
     tools: list[ToolDef]
-    #: Canned text each tool returns, keyed by tool name.
-    results: dict[str, str]
+    #: Canned result each tool returns, keyed by tool name. Usually text; a
+    #: mapping models a tool that returns a **structured** result (a status
+    #: confirmation). The wire path serializes it to an MCP text block, while
+    #: the in-process and plan paths hand the object through intact — which is
+    #: exactly where structure-dependent labelling can differ.
+    results: dict[str, Any]
     #: The ordered tool calls the agent attempts.
     steps: list[Call]
     #: The call whose execution defines the outcome (harm for attacks, utility
