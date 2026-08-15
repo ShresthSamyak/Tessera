@@ -150,6 +150,12 @@ without the `agentdojo` dep. `eval/` holds the built-in `tessera bench` frontier
   *sharpens the label* for the audit trail. The only ways a source becomes trusted are explicit
   (`trust_tool` / `set_tool_origin`) or the narrow, anti-laundering-checked action-confirmation path
   (`_is_trusted_action_confirmation` — a status/id record that re-introduces **no already-tainted token**).
+  That path is the one place a *heuristic* grants trust, so it needs **two** independent guards and both
+  must stay: the token-reflection check catches a payload the session has seen before, and
+  `_is_status_shaped` has to bound the space for one it has **not** — every key *and* value must match
+  `_STATUS_FIELD_RE` (identifier-shaped, ≤64, no whitespace / `@` / `/`). Bounding by length alone is what
+  originally let a whole sentence of fresh attacker text through as a "status field". Loosening that regex
+  re-opens an under-taint hole; tightening it only costs tax, so err tight.
 - **Origin resolution uses `is not None`, not truthiness.** `Origin.USER_QUERY == 0` is falsy; a truthiness
   test would silently drop an explicit override. Watch this when editing `ingest_result`.
 - **Every `ingest_result` call site returns `labeled.content`, never the raw result** — otherwise the
