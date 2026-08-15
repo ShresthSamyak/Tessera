@@ -311,6 +311,7 @@ def sanitize_value(
             # A field counts as changed iff sanitizing it removed a URL. That
             # avoids equality checks on arbitrary user types, and means an
             # untouched object is returned as-is rather than needlessly copied.
+            mark = len(removed)
             changes: dict[str, Any] = {}
             for name, val in fields.items():
                 before = len(removed)
@@ -321,6 +322,14 @@ def sanitize_value(
                 return v
             rebuilt = _rebuild(v, changes)
             if rebuilt is None:
+                # We are about to hand back the *original*, so every URL this
+                # subtree just recorded is still in the value. Roll them back:
+                # ``removed`` becomes the ledger's ``sanitize`` entry, and an
+                # entry claiming a URL was stripped when it survived is worse
+                # than no entry at all. The gap below is the honest record.
+                # The whole range goes, not just this object's own fields —
+                # returning ``v`` discards the sanitized children too.
+                del removed[mark:]
                 note_gap(v, "could not be rebuilt after sanitizing")
                 return v
             return rebuilt

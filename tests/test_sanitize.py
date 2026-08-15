@@ -218,9 +218,36 @@ def test_unrebuildable_object_is_reported_not_silently_passed():
             raise AttributeError("immutable")
 
     gaps: list[str] = []
-    out, _ = sanitize_value(Immutable(EXFIL), unsanitized=gaps)
+    out, removed = sanitize_value(Immutable(EXFIL), unsanitized=gaps)
     # Honest: the payload survives, but it is no longer silent.
     assert "evil.test" in out.body
+    assert gaps == ["Immutable (could not be rebuilt after sanitizing)"]
+    # ...and we do not *claim* to have stripped a URL that is still sitting in
+    # the value we handed back. ``removed`` becomes the ledger's `sanitize`
+    # entry, so a false positive here would make the audit trail lie.
+    assert removed == []
+
+
+def test_rebuild_failure_does_not_roll_back_a_sibling_that_succeeded():
+    """The rollback is scoped to the subtree that failed, not the whole walk."""
+
+    class Immutable:
+        __slots__ = ("body",)
+
+        def __init__(self, body):
+            object.__setattr__(self, "body", body)
+
+        def __setattr__(self, *a):
+            raise AttributeError("immutable")
+
+    gaps: list[str] = []
+    out, removed = sanitize_value(
+        {"ok": {"body": EXFIL}, "bad": Immutable(EXFIL)}, unsanitized=gaps
+    )
+    # The dict branch really was sanitized, so its URL stays on the list.
+    assert "evil.test" not in out["ok"]["body"]
+    assert "evil.test" in out["bad"].body
+    assert len(removed) == 1
     assert gaps == ["Immutable (could not be rebuilt after sanitizing)"]
 
 

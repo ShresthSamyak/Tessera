@@ -243,11 +243,20 @@ class Session:
 
         The trust level is inferred from the tool's blast radius unless given:
         a result from an exfiltration-capable / web-facing tool is attacker-
-        reachable and therefore ``UNTRUSTED``. A string result has its rendered
-        markdown sanitized (closing the image-exfil channel); a structured
-        (non-string) result is preserved as-is so the plan interpreter can read
-        fields from it — it is still tainted, but not deep-sanitized (a known
-        limitation tracked for structured returns).
+        reachable and therefore ``UNTRUSTED``.
+
+        **Every** result has its rendered markdown sanitized (closing the
+        image-exfil channel), whatever its shape: strings, containers, and typed
+        objects — dataclasses, Pydantic models, namespaces — are walked to their
+        string leaves. Structure is preserved rather than flattened, so the plan
+        interpreter can still field-access the result; objects are copied, never
+        mutated. A value the sanitizer could not inspect or could not rebuild
+        passes through intact and is recorded as a ``sanitize_gap`` ledger entry
+        — still tainted and still gated by the flow rule, but the *rendered*
+        channel is not closed for it, so the residual is auditable.
+
+        Returns the ``LabeledValue``. Callers must forward ``.content``, never
+        the result they passed in, or the sanitization is discarded.
         """
         profile = self._profile_for(tool)
         # Token extraction for value-flow taint uses the *original* serialized
