@@ -89,7 +89,7 @@ from tessera.provenance import LabeledValue, ProvenanceNode
 from tessera.sdk import Blocked, Guard, protect, tool
 from tessera.session import Session
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 __all__ = [
     "AllowlistDeclassifier",
