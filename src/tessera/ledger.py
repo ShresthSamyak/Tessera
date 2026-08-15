@@ -259,6 +259,15 @@ class Ledger:
     def sanitize(self, tool: str, removed: list[str]) -> LedgerEntry:
         return self.record("sanitize", tool=tool, removed=removed)
 
+    def sanitize_gap(self, tool: str, objects: list[str]) -> LedgerEntry:
+        """Record that a result carried values the sanitizer could not defang.
+
+        The flow rule is unaffected — the value is still labelled and gated —
+        but the *rendered* channel is not closed for these, so an investigator
+        should be able to see that rather than infer silence means safety.
+        """
+        return self.record("sanitize_gap", tool=tool, objects=objects)
+
     def declassify(
         self,
         tool: str,

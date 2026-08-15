@@ -169,7 +169,9 @@ A provenance-tracking MCP proxy that:
 4. **enforces** the single flow rule
    ([`tessera.policy`](src/tessera/policy.py)),
 5. **sanitizes** rendered output to close the markdown-image exfil channel
-   ([`tessera.sanitize`](src/tessera/sanitize.py)),
+   ([`tessera.sanitize`](src/tessera/sanitize.py)) -- including strings nested
+   inside typed objects (dataclasses, Pydantic models), which is the shape real
+   MCP tools return,
 6. writes an **append-only, hash-chained audit ledger** of every label and
    decision ([`tessera.ledger`](src/tessera/ledger.py)) -- each entry commits to
    the one before it, so `tessera verify audit.jsonl` detects any entry that was

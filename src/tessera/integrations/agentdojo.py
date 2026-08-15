@@ -166,8 +166,11 @@ class TesseraRuntime:
 
         if error is None:
             labeled = session.ingest_result(str(function), result)
-            if isinstance(result, str):
-                result = labeled.content  # sanitized rendering
+            # Sanitized rendering, whatever the shape. AgentDojo tools return
+            # typed objects (``Message``…), and those are exactly the ones
+            # carrying markdown bodies — keeping the raw object here would
+            # leave the image-exfil channel open for every one of them.
+            result = labeled.content
         return result, error
 
     def _refuse(self, decision: PolicyResult, env: Any = None) -> tuple[Any, str]:
