@@ -344,6 +344,45 @@ class Session:
         self.tool_levels[tool] = level
 
     @_synchronized
+    def begin_task(self, description: str = "") -> None:
+        """Start a new unit of work: drop accumulated taint, keep the audit trail.
+
+        Taint only ever accumulates — ``context_level`` is a lattice meet, so it
+        falls and never rises. That is correct *within* a task and wrong across
+        a process: one untrusted read disables every dangerous action for the
+        life of a long-running agent, and the tracked-token set grows without
+        bound alongside it. A proxy fronting an all-day agent is at that floor
+        from the first log line it reads.
+
+        This resets ``context_level``, the tracked tokens, and the provenance
+        graph, and records a ``task_boundary`` entry so the ledger shows exactly
+        where taint was dropped. Configuration (registered tools, trusted
+        origins, declassifiers) and **granted capabilities** survive — those are
+        authority, not taint, and re-granting them here would be an escalation.
+
+        .. warning::
+           **Only sound if the agent's context is reset too.** Tessera's premise
+           is that the model is an untracked mixing function. If the
+           conversation continues across this call, an injection read during the
+           previous task is still sitting in the model's context, and clearing
+           the session's memory of it turns containment into precisely the
+           laundering Tessera exists to prevent. Call this where the agent's
+           context genuinely restarts — a new conversation, a new incident, a
+           user request that does not replay history.
+
+           It is explicit and never automatic for exactly that reason: only the
+           integrator knows whether the precondition holds. If you cannot say it
+           does, do not call it — the accumulated taint is doing its job.
+        """
+        dropped = len(self._tainted_tokens)
+        level_was = self.context_level.name
+        self.context_level = TrustLevel.TRUSTED
+        self._tainted_tokens.clear()
+        self.graph = ProvenanceGraph()
+        if self.ledger:
+            self.ledger.task_boundary(description, dropped, level_was)
+
+    @_synchronized
     def grant(self, capability: Capability) -> None:
         """Add a capability to the session's held set (least authority).
 

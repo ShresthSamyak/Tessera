@@ -268,6 +268,24 @@ class Ledger:
         """
         return self.record("sanitize_gap", tool=tool, objects=objects)
 
+    def task_boundary(
+        self, description: str, dropped_tokens: int, level_was: str
+    ) -> LedgerEntry:
+        """Record that accumulated taint was deliberately dropped.
+
+        This is the one place the session *forgets* something, so it is the one
+        place an investigator most needs a marker: without it, a decision taken
+        after a boundary would look as if the preceding untrusted read had never
+        happened. The entry sits in the same hash chain as everything else, so a
+        boundary cannot be inserted or removed after the fact.
+        """
+        return self.record(
+            "task_boundary",
+            description=description,
+            dropped_tokens=dropped_tokens,
+            level_was=level_was,
+        )
+
     def declassify(
         self,
         tool: str,

@@ -36,6 +36,14 @@ UpstreamCall = Callable[[dict], dict]
 HitlCallback = Callable[[PolicyResult, str], bool]
 
 
+#: Client → proxy request marking a new unit of work, so a long-lived session
+#: can drop accumulated taint (see :meth:`Session.begin_task`). Namespaced
+#: because it is a Tessera extension, not part of MCP: the proxy answers it
+#: itself and never forwards it, so an upstream server never sees a method it
+#: would not understand.
+_BEGIN_TASK_METHOD = "tessera/beginTask"
+
+
 def _error_result(id_: Any, message: str) -> dict:
     """A tools/call result marked as an error the agent can read in-band.
 
@@ -70,6 +78,9 @@ class MCPInterceptor:
         if method == "tools/call":
             return self._handle_tools_call(message)
 
+        if method == _BEGIN_TASK_METHOD:
+            return self._handle_begin_task(message)
+
         # Everything else passes through unchanged...
         if message.get("id") is None:
             # A notification (no id): forward and expect nothing back.
@@ -82,6 +93,27 @@ class MCPInterceptor:
         if method == "tools/list":
             self._register_from_list(response)
         return response
+
+    def _handle_begin_task(self, message: dict) -> Optional[dict]:
+        """Answer ``tessera/beginTask`` locally; never forward it upstream.
+
+        This is what makes :meth:`Session.begin_task` reachable in the shape
+        that actually needs it. ``StdioProxy`` builds one session and keeps it
+        for the life of the process, so without a boundary the first untrusted
+        read a long-running agent performs disables dangerous actions until the
+        proxy restarts.
+
+        The client asserting the boundary is the same client that owns the
+        agent's context, which is exactly who is in a position to know the
+        precondition holds — see the warning on :meth:`Session.begin_task`.
+        """
+        params = message.get("params") or {}
+        description = str(params.get("description", ""))
+        self.session.begin_task(description)
+        id_ = message.get("id")
+        if id_ is None:
+            return None  # sent as a notification: nothing to reply to
+        return {"jsonrpc": "2.0", "id": id_, "result": {"ok": True}}
 
     def _register_from_list(self, response: dict) -> None:
         result = response.get("result")
