@@ -191,15 +191,15 @@ attack. The real question is containment *without* breaking legitimate work --
 so every number here reports **both**.
 
 **The headline result: the built-in frontier.** Tessera's own `tessera bench`
-runs a suite of 7 injection attacks and 3 benign workflows across strictness
+runs a suite of 7 injection attacks and 4 benign workflows across strictness
 settings:
 
 | mode         | containment | utility tax | escalations |
 | ------------ | ----------- | ----------- | ----------- |
-| `paranoid`   | 100 %       | 67 %        | 0           |
-| `balanced`   | 86 %        | 33 %        | 2           |
-| `permissive` | 86 %        | 33 %        | 7           |
-| **`plan`**   | **100 %**   | **33 %**    | **0**       |
+| `paranoid`   | 100 %       | 75 %        | 0           |
+| `balanced`   | 86 %        | 25 %        | 2           |
+| `permissive` | 86 %        | 25 %        | 7           |
+| **`plan`**   | **100 %**   | **25 %**    | **0**       |
 
 **What this table measures, precisely.** `tessera bench` replays a *fixed* call
 sequence per scenario -- there is no model in the loop and no way to put one
@@ -211,7 +211,22 @@ model. Numbers from a live-agent harness will differ, and should.
 `balanced` value-flow matching catches literal exfiltration cheaply but is
 **evaded by the data-laundering attack** (the payload paraphrased through the
 model); `paranoid` context-taint contains laundering too, but **over-taints**
-benign work. The **`plan`** row (the [plan
+benign work.
+
+**One more thing `balanced` does not cover, and it is worth being precise
+about.** The flow rule is an *integrity* rule: untrusted data must not drive a
+dangerous tool. Exfiltration is a *confidentiality* property, and the two come
+apart when the secret is provenance-clean. An agent holding a credential from a
+vetted store, told by an injected log line to publish it, builds an argument
+containing no untrusted token at all — so value-flow has nothing to match and
+allows the call. Encoding the payload is not what defeats the matcher, and
+re-wording it is not what saves you: under value-flow, containment of that shape
+is coincidental. `paranoid` and the plan interpreter both contain it, for
+different reasons. If you hold real secrets alongside untrusted reads and want
+that closed in a value-flow mode, set
+`Session(exfil_requires_clean_context=True)`, which treats exfil-capable tools
+the `paranoid` way — on this suite it lifts `balanced` to 100 % containment and
+costs 25 points of utility tax, which is why it is opt-in rather than default. The **`plan`** row (the [plan
 interpreter](#the-plan-interpreter-containment-by-construction))
 **Pareto-dominates** both -- full containment at the *lower* tax, because precise
 provenance means no over-tainting. That is the direction the project is pushing:

@@ -103,6 +103,19 @@ avoid.
   LLM followed the injection" is expected behavior. It only becomes a
   vulnerability if the resulting dangerous action *actually executed* on
   untrusted data (i.e. a containment bypass, above).
+- **Exfiltration of a *provenance-clean* secret in a value-flow mode.** The
+  flow rule is an integrity rule -- untrusted data must not drive a dangerous
+  tool. When an injection supplies only the *intent* and the secret itself
+  comes from a trusted source (a vetted config store, a secret manager), the
+  argument contains no untrusted token, so `balanced` / `permissive` allow the
+  call. The letter of the guarantee holds and the intuition it creates does
+  not, so it is stated here rather than left implied: under value-flow,
+  containment of that shape is coincidental, and re-wording the payload is
+  enough to lose it. `paranoid` and the plan interpreter both contain it, and
+  `Session(exfil_requires_clean_context=True)` closes it inside the value-flow
+  modes at a measured cost in utility tax. A report that `balanced` allowed
+  this is expected; the same against `paranoid`, plan mode, or with that flag
+  set, is in scope.
 - **Laundering past `balanced` / `permissive`.** These modes use value-flow
   matching and are explicitly **not** laundering-proof -- a payload paraphrased
   through the model can evade them. This is the documented trade for lower
