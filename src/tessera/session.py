@@ -51,6 +51,15 @@ _MIN_TOKEN_LEN = 6
 # "data, not word" (see _looks_secretish). This is the floor for that path;
 # below 4 characters even a digit run is too common to match on.
 _MIN_SECRETISH_LEN = 4
+# Upper bound on a tracked token. Matching is ``tok in text``, so a token only
+# ever fires when the *whole* string reappears in an argument — which makes a
+# multi-megabyte one useless for detection while it is retained for the life of
+# the session. Base64 image/audio payloads are exactly that shape: the token
+# alphabet includes ``+ / =``, so a blob tokenizes to one enormous string. The
+# ceiling is set well above any credential that could plausibly be copied
+# verbatim (a long JWT is ~1-2 KB), so this buys memory hygiene and costs no
+# realistic detection.
+_MAX_TOKEN_LEN = 4096
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_\-./:@+=?&%]+")
 _TRIM = ".,;:!?\"'`()[]{}<>"
 # Verbs signalling a tool READS data (its result may be attacker-reachable).
@@ -165,6 +174,8 @@ def _significant_tokens(text: str) -> set[str]:
     out: set[str] = set()
     for match in _TOKEN_RE.findall(text):
         tok = match.strip(_TRIM)
+        if len(tok) > _MAX_TOKEN_LEN:
+            continue
         if len(tok) >= _MIN_TOKEN_LEN or _looks_secretish(tok):
             out.add(tok)
     return out

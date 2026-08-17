@@ -36,17 +36,6 @@ UpstreamCall = Callable[[dict], dict]
 HitlCallback = Callable[[PolicyResult, str], bool]
 
 
-def _text_from_content(content: Any) -> str:
-    """Extract concatenated text from an MCP tools/call result content list."""
-    if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, Mapping) and item.get("type") == "text":
-                parts.append(str(item.get("text", "")))
-        return "\n".join(parts)
-    return ""
-
-
 def _error_result(id_: Any, message: str) -> dict:
     """A tools/call result marked as an error the agent can read in-band.
 
@@ -137,21 +126,38 @@ class MCPInterceptor:
         return bool(self.hitl(result, self.session.explain(result)))
 
     def _ingest_response(self, tool: str, response: dict) -> None:
-        result = response.get("result")
-        if not isinstance(result, Mapping):
-            return
-        content = result.get("content")
-        text = _text_from_content(content)
-        if not text:
-            return
-        labeled = self.session.ingest_result(tool, text)
-        # Rewrite the (now sanitized) text back into the content so the agent
-        # never renders the dangerous original.
-        if labeled.content != text and isinstance(content, list):
-            for item in content:
-                if isinstance(item, dict) and item.get("type") == "text":
-                    item["text"] = labeled.content
-                    break
+        """Label, taint and sanitize **everything** the server sent back.
+
+        This ingests the whole payload object rather than picking
+        ``content[].text`` out of it. Extracting a single block type meant every
+        other shape the MCP spec allows — ``structuredContent``, the ``text`` of
+        an embedded ``resource``, a ``resource_link``'s ``description``, a
+        bare-string ``content`` — reached the agent with **no label, no taint and
+        no ledger entry**. That is an *ingestion* gap rather than a propagation
+        one, so no strictness setting compensates for it: ``paranoid`` cannot
+        taint on data it was never shown, and an incident review sees a
+        ``decision`` with no ``label`` before it.
+
+        Passing the whole object is also what keeps this closed as the spec
+        grows — a field we have never heard of is walked by default instead of
+        being silently dropped. ``sanitize_value`` preserves shape, so the
+        sanitized copy is still a valid MCP result, and *every* text leaf in it
+        is defanged rather than just the first block (the old write-back
+        concatenated all text blocks and stored the result in block 0, leaving
+        any later block carrying its original URL).
+
+        The JSON-RPC ``error`` object is ingested on the same footing: a
+        protocol error routinely echoes its input (``"Unknown tool: <name>"``),
+        which is attacker-reachable text arriving in the agent's context.
+        """
+        for key in ("result", "error"):
+            payload = response.get(key)
+            if not isinstance(payload, Mapping):
+                continue
+            labeled = self.session.ingest_result(tool, payload)
+            # Hand the agent the sanitized copy, never the original.
+            if isinstance(labeled.content, Mapping):
+                response[key] = dict(labeled.content)
 
 
 # --------------------------------------------------------------------------
