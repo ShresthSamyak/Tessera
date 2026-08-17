@@ -67,6 +67,15 @@ in scope:
   a step not present in the validated plan, or `parse_plan` accepting a plan that
   references unknown tools, dangling variables, or otherwise smuggles control
   flow.
+- **Unlabelled ingestion.** Tool-result data reaching the agent without being
+  labelled, tainted and recorded. The stdio proxy ingests the **whole** result
+  object, so every shape the MCP spec allows is covered — `structuredContent`,
+  an embedded `resource`'s text, a `resource_link`'s description, a bare-string
+  `content`, and the JSON-RPC `error` object — not only `content[].text`. A
+  result shape that reaches the agent with no `label` entry in the ledger is in
+  scope. Known limit: content the proxy *forwards without awaiting*, i.e.
+  server-initiated notifications used for streaming partial results, is not
+  ingested.
 - **Output-sanitizer bypass.** An exfiltration channel (e.g. markdown image)
   that survives sanitization. This covers strings nested inside containers and
   inside typed objects (dataclasses, Pydantic models, namespaces, `__slots__`

@@ -143,7 +143,11 @@ launder a payload. `session.py` handles this two ways, selected by `Strictness`:
 - **On the wire** — `proxy.py` (`MCPInterceptor` is pure/transport-agnostic and is what tests drive;
   `StdioProxy` wires it to a subprocess over MCP stdio JSON-RPC). Snoops `tools/list` to auto-classify;
   intercepts `tools/call`; a blocked call comes back as an in-band tool **error the agent can read**
-  (never the blocked data).
+  (never the blocked data). `_ingest_response` passes the **whole** result object to `ingest_result`,
+  never a field picked out of it — pulling out `content[].text` is what once let `structuredContent`,
+  embedded resources and `resource_link` descriptions reach the agent with no label, no taint and no
+  ledger entry. Keep it whole-object: an unknown future field is then walked by default rather than
+  silently dropped, and the sanitized copy is written back wholesale so *every* text leaf is defanged.
 - **In-process** — `sdk.py` (`protect()` / `@tool` / `Guard`). Same flow rule, same ledger, applied to
   plain callables. This is the "one line" adoption path.
 - **By construction** — `plan.py` + `planner.py`. The CaMeL-style path: a `Plan` (a tiny constrained DSL:
