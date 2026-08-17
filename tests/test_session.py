@@ -487,3 +487,73 @@ def test_ingest_records_a_gap_for_an_object_it_cannot_sanitize():
     # The gap is the *only* sanitize-ish record: nothing was actually stripped
     # from the value we returned, so a `sanitize` entry here would be a lie.
     assert "sanitize" not in kinds
+
+
+# --- concurrent use (findings.md #16) --------------------------------------
+# ingest_result writes _tainted_tokens while authorize_call iterates it, which
+# raised "RuntimeError: Set changed size during iteration" out of the gate. The
+# stdio proxy is sequential and unaffected, but protect() and the AgentDojo
+# runtime share one session, and models emit parallel tool calls.
+
+def _concurrent_session():
+    import threading
+
+    s = _session(Strictness.BALANCED)
+    s.register_tool(classify_tool("read_web", {"properties": {"url": {}}}))
+    s.register_tool(operator_profile(
+        "send", reversibility=Reversibility.IRREVERSIBLE, exfiltration_capable=True))
+    # A wide token set makes the iteration window big enough to lose the race.
+    s.ingest_result("read_web", " ".join(f"seedtoken{i:05d}" for i in range(3000)))
+    return s, threading
+
+
+def test_gating_while_ingesting_does_not_crash():
+    s, threading = _concurrent_session()
+    errors: list[str] = []
+    stop = threading.Event()
+
+    def gate():
+        try:
+            while not stop.is_set():
+                s.authorize_call("send", {"body": "x" * 200})
+        except Exception as exc:                      # noqa: BLE001 - recorded
+            errors.append(f"{type(exc).__name__}: {exc}")
+
+    def ingest(n):
+        try:
+            for i in range(150):
+                s.ingest_result("read_web", f"freshtoken{n}{i:05d}")
+        except Exception as exc:                      # noqa: BLE001 - recorded
+            errors.append(f"{type(exc).__name__}: {exc}")
+
+    readers = [threading.Thread(target=gate, daemon=True) for _ in range(4)]
+    writers = [threading.Thread(target=ingest, args=(n,)) for n in range(4)]
+    for t in readers + writers:
+        t.start()
+    for t in writers:
+        t.join()
+    stop.set()
+    for t in readers:
+        t.join(timeout=5)
+    assert errors == []
+
+
+def test_concurrent_ingest_loses_no_taint():
+    """Not crashing is not enough — a dropped token is a silent under-taint."""
+    import threading
+
+    s = _session(Strictness.BALANCED)
+    s.register_tool(classify_tool("read_web", {"properties": {"url": {}}}))
+
+    def ingest(n):
+        for i in range(100):
+            s.ingest_result("read_web", f"UNIQUETOKEN{n:02d}{i:04d}")
+
+    threads = [threading.Thread(target=ingest, args=(n,)) for n in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    expected = {f"UNIQUETOKEN{n:02d}{i:04d}" for n in range(6) for i in range(100)}
+    assert expected <= s._tainted_tokens

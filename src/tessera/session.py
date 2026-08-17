@@ -212,7 +212,20 @@ def _stringify(value: Any) -> str:
 
 @dataclass
 class Session:
-    """Tracks taint for one agent session and authorizes its tool calls."""
+    """Tracks taint for one agent session and authorizes its tool calls.
+
+    **Threading.** One ``Session`` per agent session; it is safe to share
+    across threads. Every public entry point that touches session state takes a
+    reentrant lock (see ``_lock``), so a model emitting parallel tool calls can
+    have them ingested and gated concurrently. This is not theoretical: the
+    stdio proxy is sequential, but ``protect()`` and the AgentDojo runtime hand
+    one session to whatever the host framework does with it.
+
+    The lock makes concurrent use *correct*, not merely crash-free — no ingest
+    is lost, so a token cannot go untracked because two results arrived at once.
+    It does serialize gating, which is the right trade for a security decision;
+    the work under it is small (a substring scan over the tracked tokens).
+    """
 
     session_id: str = "default"
     policy: PolicyEngine = field(default_factory=PolicyEngine)
