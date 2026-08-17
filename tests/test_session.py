@@ -557,3 +557,59 @@ def test_concurrent_ingest_loses_no_taint():
 
     expected = {f"UNIQUETOKEN{n:02d}{i:04d}" for n in range(6) for i in range(100)}
     assert expected <= s._tainted_tokens
+
+
+# --- non-ASCII content (findings.md #13) -----------------------------------
+# The token regex was an ASCII character class, so a Japanese/Cyrillic/Arabic/
+# Thai payload produced no trackable token at all and value-flow matching had
+# nothing to match. Pure tokenization: the identical flow in ASCII was caught.
+
+def _republish(secret, logline=None, strictness=Strictness.BALANCED):
+    """Read a secret out of an untrusted log, then republish it verbatim."""
+    s = _session(strictness)
+    s.register_tool(classify_tool("read_logs", {"properties": {"q": {}}}))
+    s.register_tool(operator_profile(
+        "post_status", reversibility=Reversibility.IRREVERSIBLE,
+        exfiltration_capable=True))
+    s.ingest_result("read_logs", logline or f"error rate high; password is {secret}")
+    return s.authorize_call("post_status", {"text": secret}).decision
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [
+        "SENTINEL-Zx9-4471",      # latin, the case that always worked
+        "センチネル-機密-4471",      # japanese
+        "ПАРОЛЬ-Зх9-4471",        # cyrillic
+        "رمز-سري-4471",           # arabic
+        "รหัสลับ-4471",             # thai
+    ],
+)
+def test_a_secret_republished_verbatim_is_blocked_in_any_script(secret):
+    assert _republish(secret) is Decision.BLOCK
+
+
+def test_full_width_digits_are_secret_shaped_but_superscripts_are_not():
+    """isdecimal, not isdigit: '²' is a digit and not an OTP; '１２３４' is both."""
+    from tessera.session import _looks_secretish
+
+    assert _looks_secretish("１２３４")
+    assert not _looks_secretish("²²²²")
+
+
+def test_a_script_without_spaces_only_matches_the_whole_run():
+    """The documented residual, pinned so it stays a known boundary.
+
+    Whitespace is the only segmentation available without a real segmenter, so
+    a run written without spaces becomes one clause-sized token: republishing
+    the *whole* run is caught, republishing a fragment of it is not. PARANOID
+    does not tokenize at all, so it catches the fragment either way.
+    """
+    secret = "センチネル-機密-4471"
+    unspaced = f"パスワードは{secret}です"
+
+    assert _republish(secret, logline=unspaced) is Decision.ALLOW      # residual
+    assert _republish(unspaced, logline=unspaced) is Decision.BLOCK    # whole run
+    assert _republish(
+        secret, logline=unspaced, strictness=Strictness.PARANOID
+    ) is Decision.BLOCK                                                # the answer

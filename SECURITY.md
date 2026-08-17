@@ -109,6 +109,15 @@ avoid.
   utility tax; `paranoid` and the plan interpreter are the sound modes. A
   laundering evasion of `balanced` is expected; the same evasion of `paranoid`
   is in scope.
+- **Fragment reuse from a script written without spaces.** Value-flow matching
+  segments on whitespace, which is all the standard library offers. Content in
+  CJK or Thai therefore tokenizes into clause-sized runs: a secret republished
+  as part of the run it appeared in **is** caught, but one lifted out of the
+  middle of an unspaced run is not, because no token boundary exists there.
+  Segmenting properly needs a real tokenizer, which the pure-stdlib constraint
+  rules out. `paranoid` and plan mode do not tokenize and are unaffected. A
+  non-ASCII secret republished verbatim from a whitespace-delimited source *is*
+  in scope, and is tested across Latin, Japanese, Cyrillic, Arabic and Thai.
 - **Short all-letter secrets in value-flow modes.** `balanced` / `permissive`
   track a token by length (6+) or by secret-*shape* (4+ characters, all digits
   or letters-and-digits mixed -- so OTPs, PINs, short ids and key fragments are

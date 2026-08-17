@@ -62,7 +62,20 @@ _MIN_SECRETISH_LEN = 4
 # verbatim (a long JWT is ~1-2 KB), so this buys memory hygiene and costs no
 # realistic detection.
 _MAX_TOKEN_LEN = 4096
-_TOKEN_RE = re.compile(r"[A-Za-z0-9_\-./:@+=?&%]+")
+# ``\w`` rather than ``A-Za-z0-9_``: on ``str`` patterns Python's ``\w`` is
+# Unicode-aware, so this matches Japanese, Cyrillic, Arabic, Thai and the rest.
+# An ASCII-only class meant a non-English payload produced *no trackable token
+# at all*, so value-flow matching had nothing to match and a secret read from an
+# untrusted log could be republished verbatim in the default mode. That was pure
+# tokenization, not a provenance question: the same flow in ASCII was caught.
+#
+# Documented residual: scripts written without spaces (CJK, Thai) still yield
+# clause-sized tokens, because whitespace is the only segmentation available —
+# so a secret is caught when the surrounding run is reused verbatim, and missed
+# when only a fragment of it is. Splitting those properly needs a real
+# segmenter, which the pure-stdlib constraint rules out. ``paranoid`` and plan
+# mode do not tokenize at all and are unaffected either way.
+_TOKEN_RE = re.compile(r"[\w\-./:@+=?&%]+")
 _TRIM = ".,;:!?\"'`()[]{}<>"
 # Verbs signalling a tool READS data (its result may be attacker-reachable).
 # A dangerous tool WITHOUT one of these is a pure action whose result is
@@ -146,12 +159,16 @@ def _looks_secretish(tok: str) -> bool:
     any argument quoting them. That is the documented residual — a short
     all-letter secret still needs PARANOID or plan mode.
 
-    ASCII-only on purpose: ``str.isdigit()`` is true for characters like ``²``,
-    and a non-ASCII "digit" run is not the OTP shape this is reaching for.
+    ``isdecimal`` rather than ``isdigit``, and no blanket ASCII guard. The guard
+    used to be there because ``"²".isdigit()`` is true and a run of superscripts
+    is not an OTP — but it also excluded full-width digits (``"１２３４"``), which
+    *are* one, and every other non-ASCII secret shape along with them.
+    ``isdecimal`` draws that line exactly where it belongs: false for ``²``,
+    true for full-width digits.
     """
-    if len(tok) < _MIN_SECRETISH_LEN or not tok.isascii():
+    if len(tok) < _MIN_SECRETISH_LEN:
         return False
-    if tok.isdigit():
+    if tok.isdecimal():
         return True
     return (
         tok.isalnum()
