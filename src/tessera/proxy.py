@@ -261,7 +261,32 @@ class StdioProxy:
                     message = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                response = interceptor.handle_request(message)
+                try:
+                    response = interceptor.handle_request(message)
+                except Exception as exc:  # noqa: BLE001 - see below
+                    # An unhandled error in the guard used to escape this loop
+                    # and take the whole session (and the upstream server) down
+                    # with it. Refuse the single call instead: the agent gets a
+                    # readable in-band error and the proxy keeps serving.
+                    #
+                    # This stays fail-closed. The exception means we cannot
+                    # vouch for the call, so we do not return a result the
+                    # agent can act on — and if it was raised on the way *back*
+                    # (a ledger write that could not complete, say), refusing
+                    # also means the unaudited result never reaches the agent.
+                    sys.stderr.write(f"[tessera] {type(exc).__name__}: {exc}\n")
+                    sys.stderr.flush()
+                    # A notification carries no id, and JSON-RPC has no reply to
+                    # send for one — dropping it is the only correct answer.
+                    response = (
+                        None
+                        if message.get("id") is None
+                        else _error_result(
+                            message.get("id"),
+                            f"internal error in the guard ({type(exc).__name__}); "
+                            "the call was refused",
+                        )
+                    )
                 if response is not None:
                     emit(response)
         finally:
