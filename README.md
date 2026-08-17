@@ -197,7 +197,7 @@ settings:
 | mode         | containment | utility tax | escalations |
 | ------------ | ----------- | ----------- | ----------- |
 | `paranoid`   | 100 %       | 67 %        | 0           |
-| `balanced`   | 80 %        | 33 %        | 2           |
+| `balanced`   | 86 %        | 33 %        | 2           |
 | `permissive` | 86 %        | 33 %        | 7           |
 | **`plan`**   | **100 %**   | **33 %**    | **0**       |
 
