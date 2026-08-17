@@ -26,8 +26,10 @@ propagates **conservatively** and offers a knob:
 
 from __future__ import annotations
 
+import functools
 import json
 import re
+import threading
 from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
@@ -181,6 +183,24 @@ def _significant_tokens(text: str) -> set[str]:
     return out
 
 
+def _synchronized(method):
+    """Run ``method`` holding the session's lock.
+
+    Applied to every public entry point that touches session state, so the
+    guarded set is visible in one place rather than inferred from scattered
+    ``with`` blocks. Private helpers are deliberately *not* decorated: they are
+    only reachable through a decorated caller, and marking them too would hide
+    which surface is actually the contract.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 def _stringify(value: Any) -> str:
     if isinstance(value, str):
         return value
@@ -227,6 +247,23 @@ class Session:
     _tainted_tokens: set[str] = field(default_factory=set)
     #: Capabilities granted to this session (the held set the proxy enforces).
     _granted: list[Capability] = field(default_factory=list)
+    #: Guards every mutation of, and read over, the state above.
+    #:
+    #: A session is shared state: ``ingest_result`` writes ``_tainted_tokens``
+    #: while ``authorize_call`` iterates it, which raised ``RuntimeError: Set
+    #: changed size during iteration`` out of the gate under concurrent use.
+    #: The stdio proxy is unaffected (it reads stdin in one loop, so requests
+    #: are strictly sequential), but the in-process paths — ``protect()`` and
+    #: the AgentDojo runtime — share one session across whatever the host
+    #: framework does, and every frontier model emits parallel tool calls.
+    #:
+    #: Reentrant because the public entry points nest: ``authorize_call`` →
+    #: ``_profile_for`` → ``register_tool``. :class:`Ledger` already takes its
+    #: own lock, and is only ever acquired while holding this one, so the order
+    #: is fixed and cannot deadlock.
+    _lock: Any = field(
+        default_factory=threading.RLock, init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         if self.ledger is None:
@@ -234,10 +271,12 @@ class Session:
 
     # -- tool registration --------------------------------------------------
 
+    @_synchronized
     def register_tool(self, profile: ToolProfile) -> None:
         """Register a tool's blast-radius profile (auto or operator-set)."""
         self.profiles[profile.name] = profile
 
+    @_synchronized
     def register_declassifier(
         self, tool: str, arg: str, declassifier: Declassifier
     ) -> None:
@@ -248,6 +287,7 @@ class Session:
         """
         self.declassifiers[(tool, arg)] = declassifier
 
+    @_synchronized
     def set_tool_origin(
         self, tool: str, origin: Origin, *, level: TrustLevel | None = None
     ) -> None:
@@ -262,6 +302,7 @@ class Session:
         if level is not None:
             self.tool_levels[tool] = level
 
+    @_synchronized
     def trust_tool(self, tool: str, level: TrustLevel = TrustLevel.INTERNAL) -> None:
         """Mark a tool's output as coming from a vetted source (default INTERNAL).
 
@@ -272,6 +313,7 @@ class Session:
         self.tool_origins[tool] = Origin.VETTED_SYSTEM
         self.tool_levels[tool] = level
 
+    @_synchronized
     def grant(self, capability: Capability) -> None:
         """Add a capability to the session's held set (least authority).
 
@@ -281,6 +323,7 @@ class Session:
         """
         self._granted.append(capability)
 
+    @_synchronized
     def register_tools_from_schema(self, tools: list[Mapping[str, Any]]) -> None:
         """Auto-classify a list of MCP tool descriptors (from tools/list)."""
         for tool in tools:
@@ -304,6 +347,7 @@ class Session:
 
     # -- ingesting results (taint in) --------------------------------------
 
+    @_synchronized
     def ingest_result(
         self,
         tool: str,
@@ -596,6 +640,7 @@ class Session:
             last_reason = res.reason
         return CapabilityResult(False, last_reason)
 
+    @_synchronized
     def authorize_call(
         self,
         tool: str,
@@ -628,6 +673,7 @@ class Session:
             declassified or auto_declassified, cleaned,
         )
 
+    @_synchronized
     def authorize_call_labeled(
         self,
         tool: str,
