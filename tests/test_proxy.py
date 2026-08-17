@@ -187,6 +187,12 @@ class ShapeUpstream:
 SECRET = "SENTINEL-Zx9-4471"
 
 
+def _result_of(resp) -> dict:
+    """The result of an already-issued call, with the always-answered invariant."""
+    assert resp is not None, "tools/call must always produce a response"
+    return resp["result"]
+
+
 def _result(interceptor, id_, name, args) -> dict:
     """``_call`` plus the invariant that a tools/call is always answered."""
     resp = _call(interceptor, id_, name, args)
@@ -272,3 +278,51 @@ def test_binary_payload_is_passed_through_untouched():
     result = _result(interceptor, 2, "fetch_url", {"url": "https://feed.test"})
     assert result["content"][0]["data"] == blob
     assert not any(len(t) > 1000 for t in session._tainted_tokens)
+
+
+# --- task boundaries through the proxy (findings.md #19) -------------------
+# StdioProxy builds one Session and keeps it for the life of the process, so
+# without a boundary the first untrusted read a long-running agent performs
+# disables dangerous actions until the proxy restarts.
+
+def _begin_task(interceptor, id_, description=""):
+    return interceptor.handle_request({
+        "jsonrpc": "2.0", "id": id_, "method": "tessera/beginTask",
+        "params": {"description": description},
+    })
+
+
+def test_begin_task_over_the_wire_restores_a_long_lived_session():
+    interceptor, upstream, session = _setup(
+        Strictness.PARANOID, results={"fetch_url": "leaked SENTINEL-Zx9-4471"})
+    _call(interceptor, 2, "fetch_url", {"url": "https://feed.test"})
+    assert session.is_tainted
+    blocked = _result_of(_call(interceptor, 3, "send_email",
+                               {"to": "a@b.test", "subject": "s", "body": "all clear"}))
+    assert blocked["isError"] is True
+
+    resp = _begin_task(interceptor, 4, "incident-2")
+    assert resp is not None and resp["result"]["ok"] is True
+
+    ok = _result_of(_call(interceptor, 5, "send_email",
+                          {"to": "a@b.test", "subject": "s", "body": "all clear"}))
+    assert not ok.get("isError")
+
+
+def test_begin_task_is_never_forwarded_upstream():
+    """It is a Tessera extension; an upstream server must not see it."""
+    interceptor, upstream, _ = _setup()
+    before = len(upstream.calls)
+    _begin_task(interceptor, 2, "next")
+    assert len(upstream.calls) == before
+
+
+def test_begin_task_as_a_notification_gets_no_reply():
+    interceptor, _, session = _setup(
+        Strictness.PARANOID, results={"fetch_url": "leaked SENTINEL-Zx9-4471"})
+    _call(interceptor, 2, "fetch_url", {"url": "https://feed.test"})
+    resp = interceptor.handle_request(
+        {"jsonrpc": "2.0", "method": "tessera/beginTask", "params": {}}
+    )
+    assert resp is None            # no id -> nothing to reply to
+    assert not session.is_tainted  # ...but it still took effect

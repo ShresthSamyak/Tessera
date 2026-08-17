@@ -613,3 +613,120 @@ def test_a_script_without_spaces_only_matches_the_whole_run():
     assert _republish(
         secret, logline=unspaced, strictness=Strictness.PARANOID
     ) is Decision.BLOCK                                                # the answer
+
+
+# --- task boundaries (findings.md #14, #19, #27) ---------------------------
+# context_level is a lattice meet, so taint only ever accumulates. Correct
+# within a task, wrong across a process: one untrusted read disables dangerous
+# actions for the life of a long-running agent, and the token set grows with it.
+
+def _incident_session(strictness=Strictness.BALANCED):
+    s = _session(strictness)
+    s.register_tool(classify_tool("search_logs", {"properties": {"q": {}}}))
+    s.register_tool(operator_profile(
+        "post_status", reversibility=Reversibility.IRREVERSIBLE,
+        exfiltration_capable=True))
+    return s
+
+
+def test_begin_task_drops_taint_and_lets_work_through_again():
+    s = _incident_session(Strictness.PARANOID)
+    s.ingest_result("search_logs", "err rate high SENTINEL-Zx9-4471")
+    assert s.is_tainted
+    assert s.authorize_call("post_status", {"text": "all clear"}).decision is not Decision.ALLOW
+
+    s.begin_task("incident-2")
+
+    assert not s.is_tainted
+    assert s._tainted_tokens == set()
+    assert s.authorize_call("post_status", {"text": "all clear"}).decision is Decision.ALLOW
+
+
+def test_begin_task_keeps_configuration_and_granted_authority():
+    """Capabilities are authority, not taint - re-granting would be escalation."""
+    from tessera.capabilities import CapabilityEngine
+
+    engine = CapabilityEngine(root_key=b"k" * 32)
+    s = _incident_session()
+    s.capability_engine = engine
+    s.require_capabilities = True
+    s.grant(engine.mint_for("post_status"))
+    s.trust_tool("search_logs")
+
+    s.begin_task("next")
+
+    assert len(s._granted) == 1
+    assert "post_status" in s.profiles
+    assert "search_logs" in s.tool_levels
+
+
+def test_begin_task_is_recorded_in_the_ledger():
+    """Dropping taint silently would be a hole; the boundary must be auditable."""
+    from tessera.ledger import Ledger, MemorySink
+
+    sink = MemorySink()
+    s = _incident_session(Strictness.PARANOID)
+    s.ledger = Ledger(sink=sink, session_id="t")
+    s.ingest_result("search_logs", "err rate high SENTINEL-Zx9-4471")
+
+    s.begin_task("incident-2")
+
+    entry = next(e for e in sink.entries() if e["kind"] == "task_boundary")
+    assert entry["description"] == "incident-2"
+    assert entry["dropped_tokens"] >= 1
+    assert entry["level_was"] != "TRUSTED"
+
+
+def test_the_ledger_chain_survives_task_boundaries(tmp_path):
+    from tessera.ledger import open_ledger, verify_ledger
+
+    path = str(tmp_path / "audit.jsonl")
+    s = _incident_session(Strictness.PARANOID)
+    s.ledger = open_ledger(path, session_id="t")
+    for i in range(3):
+        s.ingest_result("search_logs", f"line {i} SENTINEL-{i}")
+        s.authorize_call("post_status", {"text": "x"})
+        s.begin_task(f"task-{i}")
+    assert verify_ledger(path).ok
+
+
+def test_a_shared_session_collapses_and_a_boundary_recovers_it():
+    """The measured cost of session lifetime, and that begin_task pays it back.
+
+    A long-lived session accumulates every word it has ever read, so ordinary
+    English in a status update eventually collides with *some* earlier log line
+    and never stops colliding. Per-task boundaries restore the fresh-session
+    rate and bound the token set.
+    """
+    status = "Investigating elevated latency on the checkout service."
+    # Lower-case, and each really occurs in ``status`` -- matching is a
+    # case-sensitive substring test, so "Investigating" would never collide.
+    colliders = ["elevated", "latency", "checkout", "service"]
+
+    def run(arm, n=40):
+        s = _incident_session()
+        allowed = 0
+        for i in range(n):
+            if arm == "fresh":
+                s = _incident_session()
+            elif arm == "boundary":
+                s.begin_task(f"incident-{i}")
+            # Every fifth incident's logs quote one of the status words, and a
+            # different one each time, so a shared session keeps collecting them.
+            word = (
+                colliders[(i // 5) % len(colliders)]
+                if i % 5 == 0
+                else f"opaque{i:05d}"
+            )
+            s.ingest_result("search_logs", f"req-{i:05d} {word} threshold exceeded")
+            if s.authorize_call("post_status", {"text": status}).decision is Decision.ALLOW:
+                allowed += 1
+        return allowed / n, len(s._tainted_tokens)
+
+    fresh_rate, fresh_tokens = run("fresh")
+    shared_rate, shared_tokens = run("shared")
+    boundary_rate, boundary_tokens = run("boundary")
+
+    assert shared_rate < fresh_rate / 2, "expected a shared session to collapse"
+    assert boundary_rate == fresh_rate, "begin_task should restore the fresh rate"
+    assert boundary_tokens == fresh_tokens < shared_tokens
