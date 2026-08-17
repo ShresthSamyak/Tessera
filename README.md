@@ -191,15 +191,22 @@ attack. The real question is containment *without* breaking legitimate work --
 so every number here reports **both**.
 
 **The headline result: the built-in frontier.** Tessera's own `tessera bench`
-runs a suite of 5 injection attacks and 3 benign workflows across strictness
+runs a suite of 7 injection attacks and 3 benign workflows across strictness
 settings:
 
 | mode         | containment | utility tax | escalations |
 | ------------ | ----------- | ----------- | ----------- |
 | `paranoid`   | 100 %       | 67 %        | 0           |
-| `balanced`   | 80 %        | 33 %        | 1           |
-| `permissive` | 80 %        | 33 %        | 5           |
+| `balanced`   | 80 %        | 33 %        | 2           |
+| `permissive` | 86 %        | 33 %        | 7           |
 | **`plan`**   | **100 %**   | **33 %**    | **0**       |
+
+**What this table measures, precisely.** `tessera bench` replays a *fixed* call
+sequence per scenario -- there is no model in the loop and no way to put one
+there. So every number here is a statement about the policy engine given those
+calls, never about what an agent does: it isolates the variable this project
+controls, at the cost of saying nothing about attack success against a real
+model. Numbers from a live-agent harness will differ, and should.
 
 `balanced` value-flow matching catches literal exfiltration cheaply but is
 **evaded by the data-laundering attack** (the payload paraphrased through the

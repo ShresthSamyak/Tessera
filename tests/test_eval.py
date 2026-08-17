@@ -162,3 +162,60 @@ def test_value_corruption_contained_via_flow_rule_not_structure():
     assert send.tool == "send_email"  # it really is a step in the plan
     assert send.decision.decision is Decision.BLOCK  # blocked by the flow rule
     assert _by_id(evaluate_plan_point())["value-corruption-reply"].success is True
+
+
+# --- the published numbers must not drift from the benchmark ---------------
+
+def test_readme_frontier_table_matches_the_benchmark():
+    """The README's headline table went stale once: it still said "5 injection
+    attacks" and 80% after the catalog grew to 7 scenarios, because nothing
+    enforced agreement. Pin it here, so adding a scenario fails loudly until the
+    published evidence is updated rather than quietly overstating it.
+    """
+    import re
+    from pathlib import Path
+
+    from tessera.eval.harness import evaluate_plan_point, evaluate_point
+    from tessera.eval.scenarios import attacks, benign
+
+    readme = (Path(__file__).resolve().parent.parent / "README.md").read_text(
+        encoding="utf-8"
+    )
+
+    # 1. The prose count of the suite.
+    counts = re.search(
+        r"suite of (\d+) injection attacks and (\d+) benign workflows", readme
+    )
+    assert counts, "README no longer describes the bench suite size"
+    assert int(counts.group(1)) == len(attacks())
+    assert int(counts.group(2)) == len(benign())
+
+    # 2. Every row of the frontier table. Bold markers are optional per cell.
+    rows = dict(
+        (m.group(1), (int(m.group(2)), int(m.group(3)), int(m.group(4))))
+        for m in re.finditer(
+            r"\|\s*\**`(\w+)`\**\s*\|"
+            r"\s*\**(\d+)\s*%\**\s*\|"
+            r"\s*\**(\d+)\s*%\**\s*\|"
+            r"\s*\**(\d+)\**\s*\|",
+            readme,
+        )
+    )
+    assert set(rows) == {"paranoid", "balanced", "permissive", "plan"}, rows
+
+    def actual(point):
+        return (
+            round(point.containment_rate * 100),
+            round(point.utility_tax * 100),
+            point.escalations,
+        )
+
+    for mode in (Strictness.PARANOID, Strictness.BALANCED, Strictness.PERMISSIVE):
+        assert rows[mode.value] == actual(evaluate_point(mode)), (
+            f"README row '{mode.value}' is stale: "
+            f"says {rows[mode.value]}, bench says {actual(evaluate_point(mode))}"
+        )
+    assert rows["plan"] == actual(evaluate_plan_point()), (
+        f"README row 'plan' is stale: says {rows['plan']}, "
+        f"bench says {actual(evaluate_plan_point())}"
+    )
