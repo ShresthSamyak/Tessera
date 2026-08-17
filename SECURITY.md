@@ -129,6 +129,17 @@ avoid.
   alphanumeric** secret flowing unflagged *is* in scope.
 - **Covert channels via tool timing or side effects.** Acknowledged residual
   risk, documented in the README's scope section.
+- **`begin_task()` called while the agent's context carries over.** The call
+  drops accumulated taint deliberately, and is sound only at a boundary where
+  the *model's* context restarts too. If the conversation continues across it,
+  an injection read before the boundary is still in the model's context after
+  it, and clearing the session's memory of it is laundering. Only the
+  integrator can know whether the precondition holds, which is why the call is
+  explicit and never automatic; every boundary is recorded as a
+  `task_boundary` ledger entry so an investigator can see exactly where taint
+  was dropped. Using it across a continuous conversation is operator error. A
+  way to trigger it *without* the operator asking — say a tool result that
+  causes a reset — would be a vulnerability.
 - **Misconfiguration.** Marking an attacker-reachable source as
   `trust_tool(...)`, or writing a semantically-loose declassifier (e.g. a regex
   that accepts any email address), is operator error, not a Tessera bug. We do

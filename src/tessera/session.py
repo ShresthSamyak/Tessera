@@ -262,6 +262,31 @@ class Session:
     require_capabilities: bool = False
     capabilities_cover_all: bool = False
 
+    #: Treat **exfiltration-capable** tools with context taint even in a
+    #: value-flow mode, so a tainted session cannot call one at all without a
+    #: declassifier or approval.
+    #:
+    #: This closes a real gap in the value-flow modes, and it is worth being
+    #: precise about which one. The flow rule is an *integrity* rule: untrusted
+    #: data must not drive a dangerous tool. Exfiltration is a *confidentiality*
+    #: property, and the two come apart exactly when the secret is
+    #: provenance-clean. An agent holding a credential from a vetted store, told
+    #: by an injected log line to publish it, produces an argument containing no
+    #: untrusted token at all — so value-flow has nothing to match and allows the
+    #: call. The letter of the rule holds; the intuition it creates ("the secret
+    #: cannot walk out") does not. Encoding the payload is not what defeats the
+    #: matcher here, and re-wording it is not what saves you: containment of that
+    #: shape under value-flow is coincidental.
+    #:
+    #: **Off by default, deliberately.** Turning it on makes a tainted session
+    #: unable to use its exfil-capable tools, which is most of what `balanced`
+    #: exists to allow — it collapses much of the difference between `balanced`
+    #: and `paranoid` rather than adding a new frontier point. Operators holding
+    #: real secrets alongside untrusted reads should turn it on (or use
+    #: `paranoid` / plan mode, which do not depend on token matching at all);
+    #: operators who mostly want laundering resistance at low tax should not.
+    exfil_requires_clean_context: bool = False
+
     # --- internal state ---
     profiles: dict[str, ToolProfile] = field(default_factory=dict)
     #: Operator-declared trust origin per tool (how much to trust its output).
@@ -591,7 +616,9 @@ class Session:
 
     # -- authorizing calls (taint out) -------------------------------------
 
-    def _tainted_args(self, args: Mapping[str, Any] | Any) -> dict[str, list[str]]:
+    def _tainted_args(
+        self, args: Mapping[str, Any] | Any, profile: ToolProfile | None = None
+    ) -> dict[str, list[str]]:
         """Which arguments carry untrusted material, under the active mode.
 
         Returns a map of argument name -> the untrusted tokens found in it. In
@@ -599,21 +626,29 @@ class Session:
         suspect (the model could have laundered the payload into any of them),
         so they are all listed. In value-flow modes, only arguments whose text
         actually contains a tracked untrusted token are listed.
+
+        With :attr:`exfil_requires_clean_context`, an exfiltration-capable tool
+        is treated the paranoid way even in a value-flow mode — see that
+        attribute for why the two differ.
         """
+        context_taint = self.policy.strictness is Strictness.PARANOID or (
+            self.exfil_requires_clean_context
+            and profile is not None
+            and profile.blast_radius.exfiltration_capable
+        )
         if not isinstance(args, Mapping):
             # Non-mapping argument payload: treat as one opaque value.
             text = _stringify(args)
-            if self.policy.strictness is Strictness.PARANOID:
+            if context_taint:
                 return {"": ["context taint"]} if self.context_level.is_untrusted else {}
             hits = sorted(tok for tok in self._tainted_tokens if tok in text)
             return {"": hits} if hits else {}
 
         tainted: dict[str, list[str]] = {}
-        paranoid = self.policy.strictness is Strictness.PARANOID
         session_tainted = self.context_level.is_untrusted
         for name, value in args.items():
             text = _stringify(value)
-            if paranoid and session_tainted:
+            if context_taint and session_tainted:
                 tainted[name] = ["context taint"]
             else:
                 hits = sorted(tok for tok in self._tainted_tokens if tok in text)
@@ -732,7 +767,7 @@ class Session:
         """
         profile = self._profile_for(tool)
         raw_args = args if isinstance(args, Mapping) else {"": args}
-        tainted = self._tainted_args(args)
+        tainted = self._tainted_args(args, profile)
         arg_level, provenance, auto_declassified, cleaned = self._evaluate_arguments(
             tool, raw_args, tainted
         )

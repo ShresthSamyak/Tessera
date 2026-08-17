@@ -202,6 +202,13 @@ without the `agentdojo` dep. `eval/` holds the built-in `tessera bench` frontier
 - **The security boundary in plan mode is `parse_plan` (`planner.py`)**, not the planner. The planner (an
   LLM) is trusted only because it sees just the query + tool list; `parse_plan` is what validates its output
   into the DSL (known tools only, well-formed exprs, no use-before-bind). Treat it as the trust boundary.
+- **Taint only falls, except at an explicit task boundary.** `context_level` is a lattice meet, so
+  within a task it can only get more untrusted — that is the soundness argument. `begin_task()` is the
+  one exception and the *only* way to drop taint: it resets `context_level`, `_tainted_tokens` and the
+  provenance graph, keeps configuration and granted capabilities (authority is not taint — re-granting
+  would be an escalation), and writes a `task_boundary` ledger entry so the drop is auditable. It must
+  stay **explicit and never automatic**: it is sound only where the *agent's* context restarts too, and
+  nothing inside Tessera can verify that. Anything that lets a tool result trigger a reset is a hole.
 - **Blocked calls surface the *reason*, never the blocked data.**
 
 ## Conventions
