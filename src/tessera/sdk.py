@@ -61,6 +61,32 @@ class Blocked(Exception):
         super().__init__(result.reason)
 
 
+class BlockedResult(str):
+    """What a blocked call returns under ``on_block="error"`` — a real ``str``.
+
+    Returning a string is the right default for a tool loop: the message goes
+    back to the model, which can read it and adapt, exactly as it would read any
+    other tool output. But a plain string makes a refusal and a success
+    indistinguishable except by prefix, so a caller that logs the value, ignores
+    it, or passes it onward gets no signal that the action did not happen.
+
+    This subclasses ``str`` so every one of those loops keeps working unchanged,
+    while ``isinstance(value, BlockedResult)`` gives code that *does* care an
+    exact test — without forcing exception handling on code that doesn't.
+    :attr:`decision` carries the full :class:`~tessera.policy.PolicyResult`, so
+    a caller can inspect the blast radius and provenance rather than parse prose.
+
+    The refusal is real either way: the wrapped function never runs.
+    """
+
+    __slots__ = ("decision",)
+
+    def __new__(cls, decision: PolicyResult) -> "BlockedResult":
+        self = super().__new__(cls, f"[blocked by Tessera] {decision.reason}")
+        self.decision = decision
+        return self
+
+
 def tool(
     fn: Callable | None = None,
     *,
@@ -140,7 +166,7 @@ class Guard:
             if decision.decision is not Decision.ALLOW:
                 if self.on_block == "raise":
                     raise Blocked(decision)
-                return f"[blocked by Tessera] {decision.reason}"
+                return BlockedResult(decision)
             try:
                 if decision.cleaned_arguments:
                     argmap.update(decision.cleaned_arguments)
