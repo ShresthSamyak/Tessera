@@ -223,3 +223,36 @@ def test_wrapped_tool_returning_an_object_gets_it_sanitized():
     out = safe("q3")
     assert isinstance(out, Doc)
     assert "evil.test" not in out.body
+
+
+# --- the failure path is labelled too (findings.md #21) --------------------
+
+def test_a_raising_tool_still_taints_from_its_error_text():
+    """A tool error echoes its input and reaches the agent; it must be tracked."""
+    from tessera.classification import Reversibility
+    from tessera.policy import Decision, PolicyEngine, Strictness
+    from tessera.sdk import Guard, tool
+    from tessera.session import Session
+
+    @tool(reversibility=Reversibility.REVERSIBLE, exfiltration_capable=False)
+    def lookup_user(query: str) -> str:
+        raise ValueError(f"no such user: {query} SENTINEL-Zx9-4471")
+
+    @tool(reversibility=Reversibility.IRREVERSIBLE, exfiltration_capable=True)
+    def send_email(to: str, body: str) -> str:
+        return "sent"
+
+    session = Session(policy=PolicyEngine(strictness=Strictness.BALANCED))
+    guard = Guard(session=session)
+    looked, _sent = guard.wrap_tools([lookup_user, send_email])
+
+    with pytest.raises(ValueError) as excinfo:
+        looked("SENTINEL-Zx9-4471")
+    # The original exception is re-raised unchanged: replacing it would change
+    # the type callers catch and lose the traceback.
+    assert "SENTINEL-Zx9-4471" in str(excinfo.value)
+
+    assert session.is_tainted
+    assert session.authorize_call(
+        "send_email", {"to": "a@b.test", "body": "SENTINEL-Zx9-4471"}
+    ).decision is Decision.BLOCK
