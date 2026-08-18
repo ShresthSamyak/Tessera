@@ -141,11 +141,26 @@ class Guard:
                 if self.on_block == "raise":
                     raise Blocked(decision)
                 return f"[blocked by Tessera] {decision.reason}"
-            if decision.cleaned_arguments:
-                argmap.update(decision.cleaned_arguments)
-                result = fn(**argmap)
-            else:
-                result = fn(*args, **kwargs)
+            try:
+                if decision.cleaned_arguments:
+                    argmap.update(decision.cleaned_arguments)
+                    result = fn(**argmap)
+                else:
+                    result = fn(*args, **kwargs)
+            except Exception as exc:  # noqa: BLE001 - labelled, then re-raised
+                # A tool's *failure* text reaches the agent just as its success
+                # value does, and it is free-form by construction: errors
+                # routinely echo their input ("no such user: <argument>"). The
+                # success path was labelled and the failure path was not, which
+                # is backwards — the free-form one is the one worth tracking.
+                #
+                # The original exception is re-raised unchanged: replacing it
+                # would change the type callers catch and lose the traceback.
+                # So this taints from the message without rewriting it, and the
+                # residual is that an exfil channel inside an exception's text
+                # is not defanged the way a returned value's would be.
+                self.session.ingest_result(tool_name, str(exc))
+                raise
             labeled = self.session.ingest_result(tool_name, result)
             # Return the *sanitized* value whatever its shape. This used to be
             # strings only, back when sanitization could not reach inside a

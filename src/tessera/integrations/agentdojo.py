@@ -171,6 +171,13 @@ class TesseraRuntime:
             # carrying markdown bodies — keeping the raw object here would
             # leave the image-exfil channel open for every one of them.
             result = labeled.content
+        else:
+            # The failure path reaches the agent too, and is free-form by
+            # construction — a tool error routinely echoes its input ("no such
+            # user: <argument>"). Labelling only the success path had it exactly
+            # backwards. Here the error is a value rather than an exception, so
+            # it can be sanitized as well as tainted.
+            error = session.ingest_result(str(function), error).content
         return result, error
 
     def _refuse(self, decision: PolicyResult, env: Any = None) -> tuple[Any, str]:
