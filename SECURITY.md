@@ -66,7 +66,11 @@ in scope:
 - **Plan-interpreter / `parse_plan` escape.** Causing the interpreter to execute
   a step not present in the validated plan, or `parse_plan` accepting a plan that
   references unknown tools, dangling variables, or otherwise smuggles control
-  flow.
+  flow. A `field` expression reaching anything other than public data is in
+  scope: keys are restricted to dot-separated public names, so neither
+  `__class__` nor a path through it to module globals is readable, and the rule
+  is enforced both at `parse_plan` and in the interpreter (a hand-built `Plan`
+  never passes through the former).
 - **Unlabelled ingestion.** Tool-result data reaching the agent without being
   labelled, tainted and recorded. The stdio proxy ingests the **whole** result
   object, so every shape the MCP spec allows is covered — `structuredContent`,

@@ -225,6 +225,11 @@ without the `agentdojo` dep. `eval/` holds the built-in `tessera bench` frontier
 - **The security boundary in plan mode is `parse_plan` (`planner.py`)**, not the planner. The planner (an
   LLM) is trusted only because it sees just the query + tool list; `parse_plan` is what validates its output
   into the DSL (known tools only, well-formed exprs, no use-before-bind). Treat it as the trust boundary.
+  It also enforces `valid_field_key`: a field key is one or more dot-separated **public** names. Field
+  access ends in `getattr`, so an unconstrained key reads Python internals — `field("m", "__class__")` once
+  handed a class object to a tool, and with dotted paths `__class__.__init__.__globals__` walks to module
+  globals. `_read_field` re-checks the same rule, because a hand-built `Plan` never passes through
+  `parse_plan` at all. Keep both checks.
 - **Taint only falls, except at an explicit task boundary.** `context_level` is a lattice meet, so
   within a task it can only get more untrusted — that is the soundness argument. `begin_task()` is the
   one exception and the *only* way to drop taint: it resets `context_level`, `_tainted_tokens` and the

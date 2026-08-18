@@ -55,6 +55,20 @@ class BlastRadius:
     #: so there it is recorded in the ledger and available to operators minting
     #: their own grants — see the note in :mod:`tessera.policy`.
     idempotent: bool
+    #: Does calling this tool hand work to *another* agent? Such a tool makes
+    #: its own tool calls, and those never pass through this session — so plan
+    #: mode's structural guarantee ("the executed set is exactly the plan's
+    #: steps") holds of the plan and not of the process.
+    #:
+    #: Unlike ``idempotent`` this **does** make a tool dangerous: whatever the
+    #: sub-agent can do, the delegating call can cause, so its blast radius is
+    #: whatever the sub-agent's tools allow — unbounded from here. That makes
+    #: the flow rule gate untrusted *instructions* flowing into a delegation,
+    #: which is right and is not sufficient: a delegation whose arguments are
+    #: plan constants carries no untrusted data, so the rule is silent while the
+    #: sub-agent is still free to act. Containing that is plan mode's job (see
+    #: :class:`~tessera.plan.PlanInterpreter`), not the flow rule's.
+    spawns_agents: bool = False
 
     @property
     def is_dangerous(self) -> bool:
@@ -66,9 +80,14 @@ class BlastRadius:
 
         Note that ``idempotent`` is deliberately absent here: a repeatable tool
         is not thereby safe, and a one-shot tool is not thereby dangerous.
+        ``spawns_agents`` *is* present: a tool that runs another agent can cause
+        anything that agent can, so it is dangerous by construction whatever its
+        own name suggests.
         """
-        return self.exfiltration_capable or (
-            self.reversibility is Reversibility.IRREVERSIBLE
+        return (
+            self.exfiltration_capable
+            or self.spawns_agents
+            or self.reversibility is Reversibility.IRREVERSIBLE
         )
 
 
@@ -111,6 +130,21 @@ _EXFIL_VERBS = (
     # Granting a new principal access exposes data outward — exfil-flavored.
     "invite",
     "grant",
+)
+#: Names that say "this tool runs another agent". Delegation is the one
+#: construct plan mode cannot contain structurally, so it is worth naming
+#: explicitly rather than lumping in with ordinary writes.
+_DELEGATION_VERBS = (
+    "delegate",
+    "dispatch",
+    "spawn",
+    "subagent",
+    "sub_agent",
+    "handoff",
+    "handover",
+    "agent",
+    "orchestrate",
+    "supervise",
 )
 _IRREVERSIBLE_VERBS = (
     "delete",
@@ -275,10 +309,15 @@ def classify_tool(
         "set" in token_set or "label" in token_set or "tag" in token_set
     )
 
+    spawns_agents = any(v in token_set for v in _DELEGATION_VERBS)
+    if spawns_agents:
+        reasons.append("name suggests it delegates to another agent")
+
     blast = BlastRadius(
         reversibility=reversibility,
         exfiltration_capable=exfiltration_capable,
         idempotent=idempotent,
+        spawns_agents=spawns_agents,
     )
     rationale = "; ".join(reasons) or "no signal"
     return ToolProfile(name=name, blast_radius=blast, source="auto", rationale=rationale)
