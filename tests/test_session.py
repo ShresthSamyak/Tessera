@@ -901,3 +901,40 @@ def test_trust_instruction_is_recorded_and_an_empty_one_is_a_no_op():
     s.trust_instruction(_INSTRUCTION)
     entry = next(e for e in sink.entries() if e["kind"] == "trust_instruction")
     assert entry["tokens"] >= 1
+
+
+# --- observable, non-evicting taint growth (findings.md #15) ---------------
+
+def test_tracked_tokens_is_observable_and_only_a_boundary_releases_it():
+    """The set has no cap and no eviction on purpose: dropping a tracked token
+    would be an under-taint hole. So it must at least be *visible*."""
+    s = _session(Strictness.BALANCED)
+    s.register_tool(classify_tool("read_logs", {"properties": {"q": {}}}))
+
+    assert s.tracked_tokens == 0
+    for i in range(20):
+        s.ingest_result("read_logs", f"req-{i:05d} trace-{i:05d} threshold exceeded")
+    grown = s.tracked_tokens
+    assert grown > 20                      # distinct strings accumulate
+
+    # Reading the same fixture again adds nothing: growth tracks *distinct*
+    # strings, not calls.
+    for i in range(20):
+        s.ingest_result("read_logs", f"req-{i:05d} trace-{i:05d} threshold exceeded")
+    assert s.tracked_tokens == grown
+
+    s.begin_task("next incident")
+    assert s.tracked_tokens == 0
+
+
+def test_an_oversized_blob_never_becomes_a_tracked_token():
+    """Ingesting whole results means base64 payloads reach the tokenizer; the
+    ceiling keeps one from being retained for the life of the session."""
+    from tessera.session import _MAX_TOKEN_LEN
+
+    s = _session(Strictness.BALANCED)
+    s.register_tool(classify_tool("read_logs", {"properties": {"q": {}}}))
+    blob = "iVBORw0KGgoAAAANSUhEUg" * 400          # well past the ceiling
+    s.ingest_result("read_logs", blob)
+    assert all(len(t) <= _MAX_TOKEN_LEN for t in s._tainted_tokens)
+    assert blob not in s._tainted_tokens

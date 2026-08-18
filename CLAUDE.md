@@ -171,6 +171,14 @@ launder a payload. `session.py` handles this two ways, selected by `Strictness`:
   Capabilities are **auto-derived** from constant-arg dangerous steps, and a **non-idempotent** dangerous
   step is capped at `max_uses(1)` — a step runs once, so a replay needs fresh authority. This is what stops
   an injection amplifying one planned action into fifty when the args are clean and the flow rule is silent.
+  **Structural containment stops at delegation.** A tool that runs another agent makes calls that never
+  reach this session, and the flow rule cannot cover it — a delegation with constant args carries no
+  untrusted data, so nothing gates it. `classification.py` infers a `spawns_agents` axis (which *does*
+  feed `is_dangerous`: whatever the sub-agent can do, the call can cause), and the interpreter **refuses
+  such a step** unless `Session.declare_subcalls_guarded(tool)` has been called. That assertion is
+  unverifiable by Tessera and therefore explicit, like `trust_tool`. Note a bare `"agent"` token is
+  deliberately *not* a delegation verb — it matches `get_agent_status`, and a false positive here is a
+  hard refusal rather than extra gating.
   A step whose *arguments* cannot be evaluated — a `field` naming a key the result never had, or a var
   whose producing step was refused — fails **that step only** and binds nothing; independent steps still
   run. `parse_plan` validates structure but cannot know a tool's runtime result shape, so this is a data
@@ -230,6 +238,11 @@ without the `agentdojo` dep. `eval/` holds the built-in `tessera bench` frontier
   handed a class object to a tool, and with dotted paths `__class__.__init__.__globals__` walks to module
   globals. `_read_field` re-checks the same rule, because a hand-built `Plan` never passes through
   `parse_plan` at all. Keep both checks.
+- **A tracked token is never evicted.** `_tainted_tokens` has no size cap and no LRU, deliberately:
+  dropping one is an under-taint hole — forget a secret and the next call carrying it is allowed. So the
+  set grows with the number of *distinct* strings a session has read, and the only sound release is
+  `begin_task()`. `Session.tracked_tokens` exposes the count so an operator can watch it; `_MAX_TOKEN_LEN`
+  keeps a base64 blob from becoming one enormous retained token. Do not add an eviction policy.
 - **Taint only falls, except at an explicit task boundary.** `context_level` is a lattice meet, so
   within a task it can only get more untrusted — that is the soundness argument. `begin_task()` is the
   one exception and the *only* way to drop taint: it resets `context_level`, `_tainted_tokens` and the

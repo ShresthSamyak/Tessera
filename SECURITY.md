@@ -71,6 +71,19 @@ in scope:
   `__class__` nor a path through it to module globals is readable, and the rule
   is enforced both at `parse_plan` and in the interpreter (a hand-built `Plan`
   never passes through the former).
+
+  **What structural containment does and does not cover.** "The executed set is
+  exactly the plan's steps" is a property of the plan, not of the process: a
+  tool that hands work to another agent makes calls of its own, and those never
+  pass through this session. The flow rule does not close the gap either, since
+  a delegation whose arguments are plan constants carries no untrusted data.
+  Plan mode therefore **refuses a delegating step** unless an operator has
+  called `Session.declare_subcalls_guarded(tool)` to assert that the sub-agent's
+  calls re-enter the session. Executing an unvouched delegating step, or
+  reaching a tool call that is not one of the plan's steps and not a sub-call of
+  a vouched tool, is in scope. What a vouched sub-agent then does is the
+  operator's assertion to make good on -- Tessera cannot verify the wrapping,
+  which is why the call is explicit.
 - **Unlabelled ingestion.** Tool-result data reaching the agent without being
   labelled, tainted and recorded. The stdio proxy ingests the **whole** result
   object, so every shape the MCP spec allows is covered — `structuredContent`,
@@ -158,6 +171,15 @@ avoid.
   residual of value-flow mode, not a bug -- use `paranoid` or plan mode, whose
   containment does not depend on token matching at all. A short **numeric or
   alphanumeric** secret flowing unflagged *is* in scope.
+- **Resource growth in a long-lived session.** Value-flow matching retains every
+  distinct token it has seen, and never evicts one -- evicting is an
+  under-taint hole, so no size cap will be offered. `Session.tracked_tokens`
+  reports the count and `begin_task()` is the sound way to release it. Likewise
+  the ledger has no rotation or size cap: at roughly 200 bytes an entry, sizing
+  is the operator's problem, and a proxy holds one file open for its lifetime.
+  A report that memory or the audit file grows without bound in a session that
+  never declares a task boundary is expected behaviour, not a vulnerability.
+  A *silent* failure to track a token is, of course, in scope.
 - **Covert channels via tool timing or side effects.** Acknowledged residual
   risk, documented in the README's scope section.
 - **`trust_instruction()` called with text the user did not author.** The call

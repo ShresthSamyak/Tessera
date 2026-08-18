@@ -958,6 +958,25 @@ class Session:
     # -- convenience --------------------------------------------------------
 
     @property
+    def tracked_tokens(self) -> int:
+        """How many untrusted tokens value-flow matching is currently holding.
+
+        Exposed because the set only grows within a task and an operator running
+        a long-lived proxy has no other way to see it. Growth tracks the number
+        of *distinct* strings the session has read, so a deployment reading real
+        logs (fresh request/trace ids every incident) climbs steadily while a
+        test replaying one fixture saturates flat.
+
+        There is deliberately **no eviction policy and no size cap**, and there
+        will not be one: dropping a tracked token is an under-taint hole — forget
+        a secret and the next call carrying it is allowed. The only sound way to
+        release them is :meth:`begin_task`, which is sound precisely because the
+        operator is asserting the unit of work (and the agent's context) has
+        ended. Watch this number; call ``begin_task`` at real boundaries.
+        """
+        return len(self._tainted_tokens)
+
+    @property
     def is_tainted(self) -> bool:
         return self.context_level.is_untrusted
 

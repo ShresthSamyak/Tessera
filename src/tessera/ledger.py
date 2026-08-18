@@ -53,6 +53,25 @@ the chain by the anchor that already exists::
 Each file then verifies under its own key, and the anchor still detects
 truncation of the retired one.
 
+**When the ledger cannot be written.** Both failures are loud and both fail
+closed, which is the right trade for a security tool -- an action taken without
+an audit record is worse than an action not taken -- but neither is silent, so
+plan for them:
+
+  * **At open.** :func:`open_ledger` reads the existing chain head in order to
+    resume it, so an unreadable path raises at startup, before any tool call.
+    Nothing runs unaudited.
+  * **Mid-run.** A disk that fills or goes read-only after writes have been
+    succeeding raises ``OSError`` out of the authorization path. The decision
+    never returns, so no caller proceeds on an unaudited ALLOW. Under the stdio
+    proxy that refuses the single call and keeps serving, rather than taking the
+    session and the upstream server down with it.
+
+There is **no rotation and no size cap**: at roughly 200 bytes an entry, and one
+file held open for the life of a proxy, sizing the audit volume is the
+operator's job. "The audit disk filled up" is a foreseeable way to stop a
+long-running deployment.
+
 The default sink writes to a file in append mode; an in-memory sink is provided
 for tests.
 """
