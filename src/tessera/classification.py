@@ -142,10 +142,15 @@ _DELEGATION_VERBS = (
     "sub_agent",
     "handoff",
     "handover",
-    "agent",
     "orchestrate",
     "supervise",
 )
+# NB: a bare "agent" token is deliberately *not* here. It matches
+# ``get_agent_status`` and ``list_agents``, which read about agents rather than
+# run one — and the consequence of a false positive is a hard plan-mode refusal,
+# not merely extra gating. The motivating case (``delegate_to_runbook_agent``)
+# is caught by "delegate" anyway. An operator whose delegating tool is named
+# without any of these verbs says so with ``operator_profile(...)``.
 _IRREVERSIBLE_VERBS = (
     "delete",
     "remove",

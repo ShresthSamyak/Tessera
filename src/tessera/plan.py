@@ -110,7 +110,7 @@ def _read_field(container: Any, key: str) -> Any:
     return current
 
 
-def _unevaluated(tool: str) -> PolicyResult:
+def _unevaluated(tool: str, reason: str = "step arguments could not be evaluated") -> PolicyResult:
     """A stand-in decision for a step the policy was never asked about.
 
     BLOCK rather than ALLOW: the step did not run, and every consumer of a
@@ -123,7 +123,7 @@ def _unevaluated(tool: str) -> PolicyResult:
         tool=tool,
         arg_level=TrustLevel.UNTRUSTED,
         profile=classify_tool(tool),
-        reason="step arguments could not be evaluated",
+        reason=reason,
     )
 
 
@@ -295,6 +295,32 @@ class PlanInterpreter:
 
         outcomes: list[StepOutcome] = []
         for index, a_step in enumerate(the_plan.steps):
+            # Structural containment covers the plan's steps, not a tool's own
+            # internal calls. A delegating tool runs another agent, whose calls
+            # never reach this session — and the flow rule cannot cover the gap,
+            # because a delegation with constant arguments carries no untrusted
+            # data and so is not gated at all. Refuse it unless an operator has
+            # vouched that the sub-calls re-enter the session; Tessera cannot
+            # check that claim, so it has to be asserted.
+            profile = self.session._profile_for(a_step.call.tool)
+            if profile.blast_radius.spawns_agents and not self.session.subcalls_are_guarded(
+                a_step.call.tool
+            ):
+                reason = (
+                    f"{a_step.call.tool!r} delegates to another agent, whose calls "
+                    "do not pass through this session; plan mode's structural "
+                    "guarantee does not cover them. Wrap the sub-agent's tools and "
+                    "call Session.declare_subcalls_guarded() to allow it."
+                )
+                outcomes.append(
+                    StepOutcome(
+                        index, a_step.call.tool, _unevaluated(a_step.call.tool, reason),
+                        False, a_step.bind, None, error=reason,
+                    )
+                )
+                if self.stop_on_block:
+                    break
+                continue
             try:
                 labeled_args = {
                     name: self._eval(expr, env)

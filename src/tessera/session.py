@@ -300,6 +300,10 @@ class Session:
     context_level: TrustLevel = TrustLevel.TRUSTED
     #: Significant tokens seen in untrusted results, for value-flow matching.
     _tainted_tokens: set[str] = field(default_factory=set)
+    #: Tools whose internal calls an operator has vouched for; see
+    #: :meth:`declare_subcalls_guarded`. Plan mode refuses a delegating step
+    #: that is not in here, because it cannot verify the claim itself.
+    _subcalls_guarded: set[str] = field(default_factory=set)
     #: Tokens the *user* supplied in this task's instruction (see
     #: :meth:`trust_instruction`). Never tracked as untrusted, because a word the
     #: user typed carries no information the attacker supplied.
@@ -371,6 +375,34 @@ class Session:
         """
         self.tool_origins[tool] = Origin.VETTED_SYSTEM
         self.tool_levels[tool] = level
+
+    @_synchronized
+    def declare_subcalls_guarded(self, tool: str) -> None:
+        """Assert that ``tool``'s internal calls re-enter this session.
+
+        Plan mode's structural guarantee — the executed set is exactly the
+        plan's steps — is a property of the *plan*, not of the process. A tool
+        that hands work to another agent makes calls of its own, and those never
+        reach this session, so the guarantee stops at the delegation. Plan mode
+        therefore refuses a delegating step unless an operator says otherwise.
+
+        This is that assertion. Only make it if the tool is wrapped so that every
+        call the sub-agent attempts is authorized here too (``protect()`` around
+        the sub-agent's tools, or routing them through the same proxy). Tessera
+        cannot check it, which is exactly why the call is explicit — the same
+        trust class as :meth:`trust_tool`.
+
+        It does **not** make the tool safe to drive with untrusted data: a
+        delegating tool stays dangerous, so the flow rule still gates an
+        untrusted instruction flowing into it.
+        """
+        self._subcalls_guarded.add(tool)
+        if self.ledger:
+            self.ledger.record("subcalls_guarded", tool=tool)
+
+    def subcalls_are_guarded(self, tool: str) -> bool:
+        """Whether an operator has vouched for ``tool``'s internal calls."""
+        return tool in self._subcalls_guarded
 
     @_synchronized
     def trust_instruction(self, text: str) -> None:
