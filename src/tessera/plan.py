@@ -35,7 +35,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Union
 
 from tessera.capabilities import arg_equals, max_uses, tool_is
-from tessera.labels import Origin
+from tessera.classification import classify_tool
+from tessera.labels import Origin, TrustLevel
 from tessera.policy import Decision, PolicyResult
 from tessera.provenance import LabeledValue
 from tessera.session import Session
@@ -66,6 +67,32 @@ def _read_field(container: Any, key: str) -> Any:
         return _MISSING
     # Object attribute access (pydantic models, dataclasses, namespaces).
     return getattr(container, key, _MISSING)
+
+
+def _unevaluated(tool: str) -> PolicyResult:
+    """A stand-in decision for a step the policy was never asked about.
+
+    BLOCK rather than ALLOW: the step did not run, and every consumer of a
+    :class:`StepOutcome` that only inspects ``decision`` must read it as "did
+    not happen". ``StepOutcome.error`` is what distinguishes it from a genuine
+    flow-rule refusal.
+    """
+    return PolicyResult(
+        decision=Decision.BLOCK,
+        tool=tool,
+        arg_level=TrustLevel.UNTRUSTED,
+        profile=classify_tool(tool),
+        reason="step arguments could not be evaluated",
+    )
+
+
+class _StepEvalError(PlanError):
+    """A step's arguments could not be evaluated from the current environment.
+
+    Separate from :class:`PlanError` proper so the interpreter can tell a
+    *runtime data* problem — a field that is not there, a variable whose
+    producing step was refused — from a malformed program, which stays fatal.
+    """
 
 
 # --------------------------------------------------------------------------
@@ -161,10 +188,19 @@ class StepOutcome:
     executed: bool
     bind: str | None
     value: LabeledValue | None
+    #: Why this step's arguments could not be evaluated, if they could not.
+    #: A step that failed here was never *offered* to the policy — it is a
+    #: different outcome from "the flow rule refused it", and conflating the two
+    #: would let a plan that fell over score as clean containment.
+    error: str | None = None
 
     @property
     def allowed(self) -> bool:
         return self.executed
+
+    @property
+    def failed(self) -> bool:
+        return self.error is not None
 
 
 @dataclass
@@ -180,6 +216,16 @@ class PlanRun:
     @property
     def blocked(self) -> list[StepOutcome]:
         return [o for o in self.outcomes if not o.executed]
+
+    @property
+    def failed(self) -> list[StepOutcome]:
+        """Steps whose arguments could not be evaluated.
+
+        Check this before reading a run as containment. A plan that died on a
+        bad field reference also took no dangerous action, and the two look
+        identical if you only ask "did the critical call execute?".
+        """
+        return [o for o in self.outcomes if o.failed]
 
 
 @dataclass
@@ -208,9 +254,39 @@ class PlanInterpreter:
 
         outcomes: list[StepOutcome] = []
         for index, a_step in enumerate(the_plan.steps):
-            labeled_args = {
-                name: self._eval(expr, env) for name, expr in a_step.call.args.items()
-            }
+            try:
+                labeled_args = {
+                    name: self._eval(expr, env)
+                    for name, expr in a_step.call.args.items()
+                }
+            except _StepEvalError as exc:
+                # A step whose arguments cannot be evaluated fails *itself*
+                # rather than aborting the plan. `parse_plan` validates
+                # structure, but it cannot know the runtime shape of a tool's
+                # result, so a `field` reference to a key that never
+                # materializes is a data outcome, not a malformed program — and
+                # a step can equally be unevaluable because the step that would
+                # have bound its variable was refused.
+                #
+                # Continuing is no less sound: the plan's control flow is fixed
+                # either way, so nothing new can run. Steps that do not depend
+                # on the missing value still do, which is the whole point —
+                # previously one bad reference took every later step with it.
+                #
+                # Note the divergence from "bind an error value": nothing is
+                # bound. Binding one would let a dependent step proceed with a
+                # fabricated argument (`send_email(body=<error text>)`), which
+                # is worse than not running. Dependents fail in turn; only
+                # independent steps carry on.
+                outcomes.append(
+                    StepOutcome(
+                        index, a_step.call.tool, _unevaluated(a_step.call.tool),
+                        False, a_step.bind, None, error=str(exc),
+                    )
+                )
+                if self.stop_on_block:
+                    break
+                continue
             decision = self.session.authorize_call_labeled(a_step.call.tool, labeled_args)
             executed = decision.decision is Decision.ALLOW
             value: LabeledValue | None = None
@@ -240,15 +316,19 @@ class PlanInterpreter:
             return LabeledValue.from_origin(expr.value, Origin.USER_QUERY, label="const")
         if isinstance(expr, Var):
             if expr.name not in env:
-                raise PlanError(f"variable {expr.name!r} used before it was bound")
+                raise _StepEvalError(
+                    f"variable {expr.name!r} used before it was bound"
+                )
             return env[expr.name]
         if isinstance(expr, Field):
             if expr.var not in env:
-                raise PlanError(f"variable {expr.var!r} used before it was bound")
+                raise _StepEvalError(
+                    f"variable {expr.var!r} used before it was bound"
+                )
             base = env[expr.var]
             sub = _read_field(base.content, expr.key)
             if sub is _MISSING:
-                raise PlanError(
+                raise _StepEvalError(
                     f"cannot read field {expr.key!r} of {expr.var!r} "
                     f"({type(base.content).__name__})"
                 )

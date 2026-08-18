@@ -171,6 +171,13 @@ launder a payload. `session.py` handles this two ways, selected by `Strictness`:
   Capabilities are **auto-derived** from constant-arg dangerous steps, and a **non-idempotent** dangerous
   step is capped at `max_uses(1)` — a step runs once, so a replay needs fresh authority. This is what stops
   an injection amplifying one planned action into fifty when the args are clean and the flow rule is silent.
+  A step whose *arguments* cannot be evaluated — a `field` naming a key the result never had, or a var
+  whose producing step was refused — fails **that step only** and binds nothing; independent steps still
+  run. `parse_plan` validates structure but cannot know a tool's runtime result shape, so this is a data
+  outcome, not a malformed program, and continuing is no less sound because the plan's control flow is
+  fixed either way. It deliberately does **not** bind an error value: a dependent step must not run with a
+  fabricated argument. Check `PlanRun.failed` before reading a run as containment — a plan that fell over
+  also took no dangerous action, and the two are indistinguishable from `critical_executed` alone.
   Gotcha: the capability gate runs *before* the flow rule, but it only **verifies** there — the use is
   spent after both gates have spoken, and a flow-rule BLOCK spends nothing (a blocked call exercises no
   authority, and burning budget on refusals let a retrying agent exhaust a `max_uses(1)` grant before its

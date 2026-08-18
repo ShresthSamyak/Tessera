@@ -131,18 +131,69 @@ def test_field_access_on_object_preserves_taint():
     assert backend.sent == []
 
 
-def test_field_access_missing_field_raises():
+def test_a_missing_field_fails_its_own_step_not_the_plan():
+    """findings.md #10. ``parse_plan`` validates structure but cannot know the
+    runtime shape of a tool's result, so a reference to a key that never
+    materializes is a data outcome, not a malformed program. It used to raise
+    and take every later step with it."""
+    from types import SimpleNamespace
+
+    backend = Backend({"read_inbox": SimpleNamespace(body="x"), "search_docs": "hits"})
+    s = _session()
+    s.register_tool(classify_tool("read_inbox", {"properties": {"folder": {}}}))
+    interp = PlanInterpreter(s, backend)
+    run = interp.run(plan(
+        step(call("read_inbox", folder=const("inbox")), bind="m"),
+        step(call("send_email", to=const("x"), body=field_of("m", "nonexistent"))),
+        # Independent of the bad reference, so it must still run.
+        step(call("search_docs", query=const("q"))),
+    ))
+
+    assert run.outcomes[1].failed
+    assert "nonexistent" in (run.outcomes[1].error or "")
+    assert not run.outcomes[1].executed
+    assert run.outcomes[2].executed
+    assert [o.index for o in run.failed] == [1]
+
+
+def test_a_failed_step_binds_nothing_so_dependents_fail_too():
+    """Deliberately *not* "bind an error value": a dependent step must not run
+    with a fabricated argument."""
     from types import SimpleNamespace
 
     backend = Backend({"read_inbox": SimpleNamespace(body="x")})
     s = _session()
     s.register_tool(classify_tool("read_inbox", {"properties": {"folder": {}}}))
     interp = PlanInterpreter(s, backend)
-    with pytest.raises(PlanError):
-        interp.run(plan(
-            step(call("read_inbox", folder=const("inbox")), bind="m"),
-            step(call("send_email", to=const("x"), body=field_of("m", "nonexistent"))),
-        ))
+    run = interp.run(plan(
+        step(call("read_inbox", folder=const("inbox")), bind="m"),
+        step(call("send_email", to=const("x"), body=field_of("m", "nope")), bind="sent"),
+        step(call("send_email", to=const("y"), body=var("sent"))),
+    ))
+    assert run.outcomes[1].failed and run.outcomes[2].failed
+    assert backend.sent == []
+
+
+def test_an_evaluation_failure_is_distinguishable_from_a_refusal():
+    """The trap the report names: a plan that fell over took no dangerous
+    action either, so it scores as containment unless the two are told apart."""
+    from types import SimpleNamespace
+
+    backend = Backend({"read_inbox": SimpleNamespace(body="x")})
+    s = _session()
+    s.register_tool(classify_tool("read_inbox", {"properties": {"folder": {}}}))
+    run = PlanInterpreter(s, backend).run(plan(
+        step(call("read_inbox", folder=const("inbox")), bind="m"),
+        step(call("send_email", to=const("x"), body=field_of("m", "nope"))),
+    ))
+    assert run.failed                      # the run did not simply "contain"
+    assert not run.completed
+    # A genuine flow-rule refusal carries no error.
+    clean = PlanInterpreter(_session(), Backend({"read_doc": INJECTED_DOC})).run(plan(
+        step(call("read_doc", doc_id=const("q3")), bind="doc"),
+        step(call("send_email", to=const("bob@co.test"), body=var("doc"))),
+    ))
+    assert clean.blocked and not clean.failed
 
 
 def test_read_only_steps_always_run():
@@ -342,10 +393,13 @@ def test_use_cap_does_not_gate_a_safe_tool():
 
 # --- Robustness ------------------------------------------------------------
 
-def test_unbound_variable_raises():
+def test_an_unbound_variable_fails_its_step():
+    """A variable can be unbound at runtime because the step that would have
+    bound it was refused — a consequence of gating, not a malformed program."""
     interp = PlanInterpreter(_session(), Backend())
-    with pytest.raises(PlanError):
-        interp.run(plan(step(call("send_email", to=const("x"), body=var("missing")))))
+    run = interp.run(plan(step(call("send_email", to=const("x"), body=var("missing")))))
+    assert run.outcomes[0].failed
+    assert "used before it was bound" in (run.outcomes[0].error or "")
 
 
 def test_stop_on_block_halts_plan():
