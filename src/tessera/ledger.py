@@ -35,6 +35,24 @@ is worse than one that doesn't try:
     outside the file: record :attr:`Ledger.head` somewhere durable and pass it
     to :func:`verify_ledger` as ``expected_head``.
 
+**Rotating the HMAC key.** :func:`verify_ledger` takes one key and applies it to
+every entry -- there is no per-entry key id and no way to supply several. So the
+obvious move, changing the key and continuing to append, produces a file that can
+**never be verified whole again**: neither key works, and neither does unkeyed.
+Turning keying *on* for an existing unkeyed file has the same effect on both
+halves. Nothing stops you doing it and nothing warns you, which is why it is
+called out here.
+
+The supported procedure is a new file per key, with continuity carried outside
+the chain by the anchor that already exists::
+
+    old.head            # record this durably, before retiring the old file
+    verify_ledger(old_path, hmac_key=OLD, expected_head=anchor)
+    verify_ledger(new_path, hmac_key=NEW)
+
+Each file then verifies under its own key, and the anchor still detects
+truncation of the retired one.
+
 The default sink writes to a file in append mode; an in-memory sink is provided
 for tests.
 """

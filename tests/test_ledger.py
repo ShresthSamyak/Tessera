@@ -327,3 +327,67 @@ def test_cli_verify_rejects_an_unset_key_env(tmp_path, monkeypatch):
     path, _ = _seed(tmp_path)
     with pytest.raises(SystemExit):
         main(["verify", str(path), "--key-env", "TESSERA_TEST_KEY"])
+
+
+# --- HMAC key rotation (findings.md #25) -----------------------------------
+# verify_ledger takes ONE key and applies it to every entry: there is no
+# per-entry key id and no way to supply several. So the obvious way to rotate --
+# change the key and keep writing -- silently destroys verifiability of the
+# whole history. The workable procedure exists; these pin both halves.
+
+KEY_A = b"A" * 32
+KEY_B = b"B" * 32
+
+
+def _keyed_run(path, key, prefix, n=3):
+    from tessera.ledger import open_ledger
+
+    led = open_ledger(path, session_id="s", hmac_key=key)
+    for i in range(n):
+        led.record("label", tool=f"{prefix}{i}", level="UNTRUSTED", origin="WEB_CONTENT")
+    return led
+
+
+def test_rotating_a_key_in_place_makes_the_file_unverifiable(tmp_path):
+    """The natural attempt, and it fails silently in the worst direction."""
+    from tessera.ledger import verify_ledger
+
+    path = str(tmp_path / "rotate.jsonl")
+    _keyed_run(path, KEY_A, "t")
+    _keyed_run(path, KEY_B, "u")
+
+    assert not verify_ledger(path, hmac_key=KEY_A).ok
+    assert not verify_ledger(path, hmac_key=KEY_B).ok
+    assert not verify_ledger(path).ok
+
+
+def test_turning_keying_on_for_an_existing_file_is_the_same_trap(tmp_path):
+    from tessera.ledger import verify_ledger
+
+    path = str(tmp_path / "enable.jsonl")
+    _keyed_run(path, None, "t")     # unkeyed history
+    _keyed_run(path, KEY_B, "u")    # ...then keyed
+
+    assert not verify_ledger(path, hmac_key=KEY_B).ok
+    assert not verify_ledger(path).ok
+
+
+def test_a_new_file_per_key_anchored_by_the_old_head_is_the_procedure(tmp_path):
+    """Each file verifies under its own key, and the anchor carries continuity
+    across the boundary that the chain itself cannot."""
+    from tessera.ledger import verify_ledger
+
+    old_path = str(tmp_path / "old.jsonl")
+    new_path = str(tmp_path / "new.jsonl")
+
+    old = _keyed_run(old_path, KEY_A, "t")
+    anchor = old.head                      # record this outside the file
+    _keyed_run(new_path, KEY_B, "u")
+
+    assert verify_ledger(old_path, hmac_key=KEY_A, expected_head=anchor).ok
+    assert verify_ledger(new_path, hmac_key=KEY_B).ok
+    # ...and the anchor still detects truncation of the retired file.
+    lines = open(old_path, encoding="utf-8").read().splitlines()
+    with open(old_path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines[:-1]) + "\n")
+    assert not verify_ledger(old_path, hmac_key=KEY_A, expected_head=anchor).ok

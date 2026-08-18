@@ -99,7 +99,12 @@ in scope:
   leaves the chain verifying is in scope. The documented limits are **not**:
   rewriting an *unkeyed* chain end-to-end (use `--ledger-key-env`, with the
   verifier's key held off the agent host), and dropping trailing entries
-  (detectable only against an externally-recorded `--expected-head`).
+  (detectable only against an externally-recorded `--expected-head`). Rotating
+  the HMAC key **in place** also puts a file beyond verification -- one key is
+  applied to every entry, so a file written under two keys verifies under
+  neither. Start a new file per key and carry continuity with the retired
+  file's `head` as the new anchor; that is the supported procedure and it is
+  tested.
 
 ## What is out of scope (by design, not by omission)
 
@@ -174,6 +179,16 @@ avoid.
   was dropped. Using it across a continuous conversation is operator error. A
   way to trigger it *without* the operator asking — say a tool result that
   causes a reset — would be a vulnerability.
+- **Capability expiry against a compromised host's clock.** `expires_at` is
+  evaluated against whatever `CapabilityEngine.time_source` returns, which
+  defaults to the local clock -- so a host that can wind its own clock back can
+  revive an expired capability. That is inherent to judging time locally, and it
+  is the one caveat the "assume the host is owned" premise undermines. Set
+  `time_source` to an attested or remote clock if expiry has to hold against
+  that threat; it is respected everywhere, including the `Session` gate the
+  proxy uses. Unforgeability and attenuation do **not** depend on the clock and
+  a bypass of either is in scope.
+
 - **Misconfiguration.** Marking an attacker-reachable source as
   `trust_tool(...)`, or writing a semantically-loose declassifier (e.g. a regex
   that accepts any email address), is operator error, not a Tessera bug. We do
