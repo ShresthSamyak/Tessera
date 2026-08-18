@@ -31,6 +31,8 @@ does not matter because it only ever sees the trusted query. We accept the
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Union
 
@@ -52,6 +54,28 @@ class PlanError(Exception):
 _MISSING = object()
 
 
+#: A single path segment. Deliberately excludes anything starting with ``_``.
+#: Field access ends in ``getattr``, so without this ``field("m", "__class__")``
+#: reads Python internals — and with dotted paths
+#: ``__class__.__init__.__globals__`` walks to module globals. The planner is an
+#: LLM and ``parse_plan`` is the boundary that assumes it may be wrong or
+#: hostile, so reaching runtime internals through a *data* expression is exactly
+#: what that boundary exists to refuse. Tool results do not have private fields
+#: worth reading, so this costs nothing real.
+_FIELD_SEGMENT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_]*\Z")
+
+
+def valid_field_key(key: str) -> bool:
+    """Whether ``key`` is a legal (possibly dotted) field path.
+
+    Public because :func:`tessera.planner.parse_plan` enforces the same rule at
+    the trust boundary — the interpreter must not be the only thing standing
+    between a malformed plan and ``getattr``.
+    """
+    parts = key.split(".")
+    return bool(parts) and all(_FIELD_SEGMENT_RE.match(p) for p in parts)
+
+
 def _read_field(container: Any, key: str) -> Any:
     """Read field ``key`` from a structured value, returning ``_MISSING`` if absent.
 
@@ -60,13 +84,30 @@ def _read_field(container: Any, key: str) -> Any:
     AgentDojo tools return (``Message``). Lists/strings have no named field, so
     a name lookup on them is a miss (indexing a list of objects needs an index
     the constrained DSL doesn't yet express — a documented limitation).
+
+    ``key`` may be a **dotted path** (``"labels.severity"``), walked one segment
+    at a time. Real results nest — an alert carries its service at
+    ``labels.service``, not ``service`` — and without this a planner had to
+    guess a flat name and the step failed at runtime when it guessed wrong. A
+    path grants no new reach: every segment is an ordinary read of a value the
+    step already holds, and the result keeps the parent's label.
     """
-    if isinstance(container, Mapping):
-        return container[key] if key in container else _MISSING
-    if isinstance(container, (str, bytes, list, tuple, set)):
+    if not valid_field_key(key):
         return _MISSING
-    # Object attribute access (pydantic models, dataclasses, namespaces).
-    return getattr(container, key, _MISSING)
+    current = container
+    for part in key.split("."):
+        if isinstance(current, Mapping):
+            if part not in current:
+                return _MISSING
+            current = current[part]
+            continue
+        if isinstance(current, (str, bytes, list, tuple, set)):
+            return _MISSING
+        # Object attribute access (pydantic models, dataclasses, namespaces).
+        current = getattr(current, part, _MISSING)
+        if current is _MISSING:
+            return _MISSING
+    return current
 
 
 def _unevaluated(tool: str) -> PolicyResult:
