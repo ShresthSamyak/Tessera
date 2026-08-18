@@ -167,8 +167,12 @@ launder a payload. `session.py` handles this two ways, selected by `Strictness`:
   Capabilities are **auto-derived** from constant-arg dangerous steps, and a **non-idempotent** dangerous
   step is capped at `max_uses(1)` — a step runs once, so a replay needs fresh authority. This is what stops
   an injection amplifying one planned action into fifty when the args are clean and the flow rule is silent.
-  Gotcha: the capability gate runs *before* the flow rule, so a flow-rule-blocked call still spends a use
-  (errs closed; pinned by `test_flow_rule_block_still_spends_the_use_budget`).
+  Gotcha: the capability gate runs *before* the flow rule, but it only **verifies** there — the use is
+  spent after both gates have spoken, and a flow-rule BLOCK spends nothing (a blocked call exercises no
+  authority, and burning budget on refusals let a retrying agent exhaust a `max_uses(1)` grant before its
+  legitimate call). ESCALATE *does* spend: the session hands back a decision and never learns whether the
+  human approved, so erring closed there is the direction that costs less. Both pinned —
+  `test_a_flow_rule_block_does_not_spend_the_use_budget` and `test_an_escalation_still_spends_a_use`.
 
 ### The two membranes that let untrusted data through safely
 
