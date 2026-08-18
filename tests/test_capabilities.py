@@ -115,3 +115,59 @@ def test_mint_for_convenience(engine):
     )
     assert engine.verify(cap, "send_email", {"to": "bob@co.test"}, now=time.time()).authorized
     assert engine.verify(cap, "send_email", {"to": "x@y.test"}).denied
+
+
+# --- expiry and the clock (findings.md #22) --------------------------------
+# Capabilities exist to strip ambient authority from a host assumed compromised.
+# Judging expiry by *that host's* clock is the one caveat that undermines the
+# assumption, so the time source has to be injectable where enforcement happens.
+
+def test_a_wound_back_clock_revives_an_expired_capability():
+    """Stated so the limit is a known property rather than a surprise."""
+    import time
+
+    from tessera.capabilities import CapabilityEngine
+
+    engine = CapabilityEngine(root_key=b"k" * 32)
+    cap = engine.mint_for("send_email", expires_in=-10)  # already expired
+
+    assert not engine.verify(cap, "send_email", {}).authorized
+    assert engine.verify(cap, "send_email", {}, now=time.time() - 3600).authorized
+
+
+def test_an_injected_time_source_is_used_by_the_session_gate():
+    """The escape hatch has to reach the *enforcement* path.
+
+    ``verify(..., now=)`` is per-call, and ``Session`` verifies internally --
+    so before ``time_source`` a proxy operator could not supply a trusted clock
+    at all, which is where it matters most.
+    """
+    import time
+
+    from tessera.capabilities import CapabilityEngine
+    from tessera.classification import Reversibility, operator_profile
+    from tessera.policy import Decision, PolicyEngine, Strictness
+    from tessera.session import Session
+
+    def build(clock=None):
+        kwargs = {"time_source": clock} if clock else {}
+        engine = CapabilityEngine(root_key=b"k" * 32, **kwargs)
+        session = Session(
+            policy=PolicyEngine(strictness=Strictness.BALANCED),
+            capability_engine=engine,
+            require_capabilities=True,
+        )
+        session.register_tool(operator_profile(
+            "send_email", reversibility=Reversibility.IRREVERSIBLE,
+            exfiltration_capable=True))
+        session.grant(engine.mint_for("send_email", expires_in=-10))
+        return session
+
+    # A host whose clock has been wound back revives the expired grant...
+    assert build(lambda: time.time() - 3600).authorize_call(
+        "send_email", {"to": "a@b.test"}
+    ).decision is Decision.ALLOW
+    # ...and a trusted source restores the intended refusal, through the Session.
+    assert build(lambda: time.time()).authorize_call(
+        "send_email", {"to": "a@b.test"}
+    ).decision is Decision.BLOCK

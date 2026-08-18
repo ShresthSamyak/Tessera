@@ -39,7 +39,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Any, Mapping
+from typing import Any, Callable, Mapping
 
 
 def _hmac(key: bytes, msg: str) -> bytes:
