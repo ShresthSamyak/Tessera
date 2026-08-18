@@ -110,6 +110,12 @@ class MCPInterceptor:
         params = message.get("params") or {}
         description = str(params.get("description", ""))
         self.session.begin_task(description)
+        # A new task usually comes with a new user instruction, and its
+        # vocabulary is the user's own — see Session.trust_instruction for the
+        # precondition on what may be passed here.
+        instruction = params.get("instruction")
+        if isinstance(instruction, str) and instruction:
+            self.session.trust_instruction(instruction)
         id_ = message.get("id")
         if id_ is None:
             return None  # sent as a notification: nothing to reply to

@@ -138,6 +138,14 @@ launder a payload. `session.py` handles this two ways, selected by `Strictness`:
   or plan mode. If you touch either floor, re-run `tessera bench` — the utility tax is the thing you are
   trading against, and `short-secret-exfil` is the scenario that pins the shape path.
 
+  Two escape hatches exist for the tax this creates, and both are **explicit assertions only the
+  integrator can make**, so neither may ever become automatic. `begin_task()` drops accumulated taint
+  at a unit-of-work boundary (see the invariant below). `trust_instruction(text)` exempts the *user's
+  own* vocabulary — the user says "roll back checkout-api", every log line echoes `checkout-api`, and
+  without this the legitimate action on the service the user named is gated. It is free in containment
+  terms precisely because the high-value strings (a credential, an attacker URL) are exactly what a
+  user never types. Both are ledger-recorded; both are scoped to the task.
+
 ### Three ways the same engine is applied
 
 - **On the wire** — `proxy.py` (`MCPInterceptor` is pure/transport-agnostic and is what tests drive;

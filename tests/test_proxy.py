@@ -326,3 +326,24 @@ def test_begin_task_as_a_notification_gets_no_reply():
     )
     assert resp is None            # no id -> nothing to reply to
     assert not session.is_tainted  # ...but it still took effect
+
+
+def test_begin_task_can_carry_the_users_instruction():
+    """A new task usually arrives with a new instruction (findings.md #3)."""
+    interceptor, _, session = _setup(
+        Strictness.BALANCED,
+        results={"fetch_url": "checkout-api error rate 11.4% key SENTINEL-Zx9-4471"})
+    interceptor.handle_request({
+        "jsonrpc": "2.0", "id": 2, "method": "tessera/beginTask",
+        "params": {"description": "incident", "instruction": "roll back checkout-api"},
+    })
+    _call(interceptor, 3, "fetch_url", {"url": "https://feed.test"})
+
+    # The user's own word is free...
+    ok = _result_of(_call(interceptor, 4, "send_email",
+                          {"to": "a@b.test", "subject": "s", "body": "checkout-api rolled back"}))
+    assert not ok.get("isError")
+    # ...the secret they never typed is not.
+    blocked = _result_of(_call(interceptor, 5, "send_email",
+                               {"to": "a@b.test", "subject": "s", "body": "SENTINEL-Zx9-4471"}))
+    assert blocked["isError"] is True

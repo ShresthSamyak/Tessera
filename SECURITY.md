@@ -142,6 +142,18 @@ avoid.
   alphanumeric** secret flowing unflagged *is* in scope.
 - **Covert channels via tool timing or side effects.** Acknowledged residual
   risk, documented in the README's scope section.
+- **`trust_instruction()` called with text the user did not author.** The call
+  exempts an instruction's vocabulary from value-flow tracking, on the grounds
+  that a word the user typed carries no information the attacker supplied. That
+  holds only while the text really is operator- or user-authored. Passing
+  something derived from an untrusted source -- a ticket body, an inbound
+  email, a summary of a page the agent just read -- launders that source's
+  vocabulary into the trusted set, and is operator error in the same class as
+  `trust_tool` on an attacker-reachable source. The exemption is scoped to one
+  task (`begin_task` clears it) and each call is recorded as a
+  `trust_instruction` ledger entry. Note what it cannot reach: a credential or
+  attacker URL does not appear in a user's instruction, so those stay tracked.
+
 - **`begin_task()` called while the agent's context carries over.** The call
   drops accumulated taint deliberately, and is sound only at a boundary where
   the *model's* context restarts too. If the conversation continues across it,
