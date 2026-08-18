@@ -334,15 +334,23 @@ def operator_profile(
     reversibility: Reversibility,
     exfiltration_capable: bool,
     idempotent: bool = False,
+    spawns_agents: bool = False,
     rationale: str = "operator override",
 ) -> ToolProfile:
-    """Build an explicit, operator-declared profile (overrides auto-classify)."""
+    """Build an explicit, operator-declared profile (overrides auto-classify).
+
+    ``spawns_agents`` is how an operator declares a delegating tool whose name
+    carries none of the verbs the classifier looks for — plan mode refuses such
+    a step unless :meth:`~tessera.session.Session.declare_subcalls_guarded` has
+    vouched for it.
+    """
     return ToolProfile(
         name=name,
         blast_radius=BlastRadius(
             reversibility=reversibility,
             exfiltration_capable=exfiltration_capable,
             idempotent=idempotent,
+            spawns_agents=spawns_agents,
         ),
         source="operator",
         rationale=rationale,
