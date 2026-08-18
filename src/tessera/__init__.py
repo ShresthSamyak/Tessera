@@ -61,7 +61,6 @@ from tessera.ledger import (
     verify_ledger,
 )
 from tessera.plan import (
-    valid_field_key,
     Call,
     Const,
     Field,
@@ -74,6 +73,7 @@ from tessera.plan import (
     const,
     plan,
     step,
+    valid_field_key,
     var,
 )
 from tessera.planner import (
@@ -152,6 +152,7 @@ __all__ = [
     "plan",
     "protect",
     "step",
+    "valid_field_key",
     "tool",
     "tool_is",
     "var",

@@ -260,6 +260,7 @@ name to capture the step's result).
     {"const": <value>}                       a literal you decide from the query
     {"var": "<name>"}                         a result bound by an EARLIER step
     {"field": {"var": "<name>", "key": "k"}}  a field of an earlier result
+- A field `key` may be a dotted path into a nested result (`{"field": {"var": "alert", "key": "labels.severity"}}`). Use it when the value you need is nested — guessing a flat name fails at run time. Each segment must be a plain public name; keys starting with `_` are rejected.
 - Only reference a `var`/`field` that an earlier step has already bound.
 - Plan only what the user actually asked for. Do not add steps — especially \
 dangerous ones (sending, deleting, paying) — that the user did not request.
