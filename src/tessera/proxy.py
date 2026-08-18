@@ -44,6 +44,34 @@ HitlCallback = Callable[[PolicyResult, str], bool]
 _BEGIN_TASK_METHOD = "tessera/beginTask"
 
 
+def _ingest_upstream_message(session: Session, message: dict) -> dict:
+    """Label and sanitize a **server-initiated** message before the agent sees it.
+
+    The synchronous request/response path is not the only way data reaches the
+    agent. A server may stream partial output as progress notifications, or send
+    a request of its own (``sampling/createMessage`` carries whole conversations),
+    and those are forwarded to the client without ever being awaited — so they
+    used to travel a path with no ingestion step in it at all. A server could
+    deliver an entire payload that way and return an empty result, and the
+    session would stay clean.
+
+    So the payload gets the same treatment as a tool result: labelled, tainted,
+    sanitized, recorded. Attribution is the method name rather than a tool name,
+    since there is no tool to attribute it to, which keeps the ledger honest
+    about where the data came from.
+
+    Messages with no ``params`` (``notifications/tools/list_changed``) carry
+    nothing and are passed through untouched — ingesting them would taint a
+    session on an empty signal.
+    """
+    params = message.get("params")
+    if params is None:
+        return message
+    source = f"upstream:{message.get('method') or 'unknown'}"
+    labeled = session.ingest_result(source, params)
+    return {**message, "params": labeled.content}
+
+
 def _error_result(id_: Any, message: str) -> dict:
     """A tools/call result marked as an error the agent can read in-band.
 
@@ -120,6 +148,10 @@ class MCPInterceptor:
         if id_ is None:
             return None  # sent as a notification: nothing to reply to
         return {"jsonrpc": "2.0", "id": id_, "result": {"ok": True}}
+
+    def handle_upstream_message(self, message: dict) -> dict:
+        """Ingest a server-initiated message and return the sanitized copy."""
+        return _ingest_upstream_message(self.session, message)
 
     def _register_from_list(self, response: dict) -> None:
         result = response.get("result")
@@ -287,8 +319,15 @@ class StdioProxy:
             out.write(json.dumps(msg) + "\n")
             out.flush()
 
-        upstream = _SubprocessUpstream(proc, on_notification=emit)
-        interceptor = MCPInterceptor(self._build_session(), upstream, hitl=self.hitl)
+        session = self._build_session()
+
+        def emit_from_upstream(msg: dict) -> None:
+            # Server-initiated traffic reaches the agent too, so it is labelled
+            # and sanitized on the way out rather than forwarded verbatim.
+            emit(_ingest_upstream_message(session, msg))
+
+        upstream = _SubprocessUpstream(proc, on_notification=emit_from_upstream)
+        interceptor = MCPInterceptor(session, upstream, hitl=self.hitl)
 
         try:
             for line in sys.stdin:
