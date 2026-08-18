@@ -171,6 +171,14 @@ launder a payload. `session.py` handles this two ways, selected by `Strictness`:
   Capabilities are **auto-derived** from constant-arg dangerous steps, and a **non-idempotent** dangerous
   step is capped at `max_uses(1)` — a step runs once, so a replay needs fresh authority. This is what stops
   an injection amplifying one planned action into fifty when the args are clean and the flow rule is silent.
+  **What plan mode can express** is wider than "constants only": a plan does not need to *know* a value
+  at plan time, it needs to *reference* it — `field`(+ dotted path) off an earlier result, squeezed
+  through a declassifier registered on the destination `(tool, arg)`. That covers a version read from a
+  runbook (`PatternDeclassifier` on a semver), a nested untrusted severity (`EnumDeclassifier`), and an
+  observed figure quoted outward (`NumberDeclassifier` — what arrives is a float *it* produced, not
+  attacker text). Two ceilings are real and stay: a fixed plan **cannot branch**, and a value embedded in
+  **free-form prose** cannot be extracted, because that needs a declassifier whose *input* is unbounded —
+  the laundering this project refuses to offer, which is why `PatternDeclassifier` full-matches.
   **Structural containment stops at delegation.** A tool that runs another agent makes calls that never
   reach this session, and the flow rule cannot cover it — a delegation with constant args carries no
   untrusted data, so nothing gates it. `classification.py` infers a `spawns_agents` axis (which *does*

@@ -567,3 +567,93 @@ def test_a_delegating_tool_is_dangerous_so_untrusted_instructions_are_gated():
                   service=const("checkout-api"), instruction=var("rb"))),
     ))
     assert run.outcomes[1].decision.decision is not Decision.ALLOW
+
+
+# --- what plan mode can actually express (findings.md #12) -----------------
+# The reported ceiling ("6 of 20 scenarios cannot be planned honestly") was
+# measured before dotted paths. A plan does not need to *know* a value at plan
+# time -- it needs to *reference* it: a field of an earlier result, squeezed
+# through a declassifier on the way into a dangerous argument. These pin the
+# three shapes that unlocks, so the capability cannot quietly regress.
+
+def _planning_session(reads, dangerous, declassifiers):
+    from tessera.labels import Origin
+
+    s = Session(policy=PolicyEngine(strictness=Strictness.PARANOID))
+    for tool in reads:
+        s.register_tool(classify_tool(tool, {"properties": {"x": {}}}))
+        s.set_tool_origin(tool, Origin.WEB_CONTENT)   # untrusted by construction
+    for tool in dangerous:
+        s.register_tool(operator_profile(
+            tool, reversibility=Reversibility.IRREVERSIBLE,
+            exfiltration_capable=True))
+    for (tool, arg), d in declassifiers.items():
+        s.register_declassifier(tool, arg, d)
+    return s
+
+
+def test_a_value_read_at_run_time_can_drive_a_dangerous_step():
+    """B1: the rollback version lives in the runbook, unknown when the plan is
+    written. The plan references it instead of knowing it."""
+    from tessera.declassify import PatternDeclassifier
+
+    s = _planning_session(
+        ["get_runbook"], ["rollback_deploy"],
+        {("rollback_deploy", "version"): PatternDeclassifier("semver", r"\d+\.\d+\.\d+")})
+    backend = Backend({"get_runbook": {"service": "checkout-api", "version": "4.2.0"}})
+    run = PlanInterpreter(s, backend).run(plan(
+        step(call("get_runbook", x=const("checkout-api")), bind="rb"),
+        step(call("rollback_deploy", version=field_of("rb", "version"))),
+    ))
+    assert run.outcomes[1].executed
+
+
+def test_a_nested_untrusted_value_can_drive_a_dangerous_step():
+    """B3: the severity sits at ``labels.severity`` -- one level deeper than
+    ``field`` used to reach -- and is untrusted, so it needs both."""
+    from tessera.declassify import EnumDeclassifier
+
+    s = _planning_session(
+        ["read_alert"], ["page_oncall"],
+        {("page_oncall", "severity"): EnumDeclassifier("sev", ["low", "high"])})
+    backend = Backend({"read_alert": {"labels": {"severity": "high"}}})
+    run = PlanInterpreter(s, backend).run(plan(
+        step(call("read_alert", x=const("a1")), bind="al"),
+        step(call("page_oncall", severity=field_of("al", "labels.severity"))),
+    ))
+    assert run.outcomes[1].executed
+
+
+def test_an_observed_figure_reaches_an_exfil_argument_canonicalized():
+    """B7: quoting a measured number outward. The declassifier is what makes it
+    sound -- what arrives is a float it produced, not text the attacker wrote."""
+    from tessera.declassify import NumberDeclassifier
+
+    s = _planning_session(
+        ["search_logs"], ["post_status"],
+        {("post_status", "rate"): NumberDeclassifier("rate", minimum=0, maximum=100)})
+    backend = Backend({"search_logs": {"error_rate": "11.4"}})
+    run = PlanInterpreter(s, backend).run(plan(
+        step(call("search_logs", x=const("q")), bind="lg"),
+        step(call("post_status", rate=field_of("lg", "error_rate"))),
+    ))
+    assert run.outcomes[1].executed
+    assert backend.calls[-1][1] == {"rate": 11.4}      # a float, not a string
+
+
+def test_free_form_prose_still_cannot_reach_a_dangerous_argument():
+    """The ceiling that is real: extracting a value out of unbounded prose needs
+    a declassifier whose *input* is unbounded, which is the laundering this
+    project refuses to offer. PatternDeclassifier full-matches for that reason."""
+    from tessera.declassify import PatternDeclassifier
+
+    s = _planning_session(
+        ["get_runbook"], ["rollback_deploy"],
+        {("rollback_deploy", "version"): PatternDeclassifier("semver", r"\d+\.\d+\.\d+")})
+    backend = Backend({"get_runbook": {"body": "please roll back to 4.2.0 today"}})
+    run = PlanInterpreter(s, backend).run(plan(
+        step(call("get_runbook", x=const("checkout-api")), bind="rb"),
+        step(call("rollback_deploy", version=field_of("rb", "body"))),
+    ))
+    assert not run.outcomes[1].executed
+    assert backend.calls == [("get_runbook", {"x": "checkout-api"})]
