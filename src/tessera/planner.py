@@ -33,7 +33,19 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
-from tessera.plan import Const, Field, Plan, Step, Var, call, const, plan, step, var
+from tessera.plan import (
+    Const,
+    Field,
+    Plan,
+    Step,
+    Var,
+    call,
+    const,
+    plan,
+    step,
+    valid_field_key,
+    var,
+)
 
 DEFAULT_MODEL = "claude-opus-4-8"
 
@@ -112,6 +124,15 @@ def _parse_expr(raw: Any, bound: set[str], where: str) -> Const | Var | Field:
             raise PlannerError(f"{where}: field 'var' and 'key' must be strings")
         if name not in bound:
             raise PlannerError(f"{where}: variable {name!r} used before it is bound")
+        if not valid_field_key(key):
+            # Field access ends in getattr, so an unconstrained key reaches
+            # Python internals (``__class__``, and via a dotted path
+            # ``__class__.__init__.__globals__``). The planner is an LLM; this
+            # boundary exists on the assumption it may be wrong or hostile.
+            raise PlannerError(
+                f"{where}: field key {key!r} must be one or more dot-separated "
+                "names, none starting with '_'"
+            )
         return Field(var=name, key=key)
     raise PlannerError(
         f"{where}: argument must have exactly one of 'const', 'var', or 'field' "
