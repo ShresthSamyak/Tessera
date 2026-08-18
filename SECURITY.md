@@ -73,9 +73,12 @@ in scope:
   an embedded `resource`'s text, a `resource_link`'s description, a bare-string
   `content`, and the JSON-RPC `error` object — not only `content[].text`. A
   result shape that reaches the agent with no `label` entry in the ledger is in
-  scope. Known limit: content the proxy *forwards without awaiting*, i.e.
-  server-initiated notifications used for streaming partial results, is not
-  ingested.
+  scope. This covers **server-initiated** traffic as well: a progress
+  notification streaming partial output, or a request the server raises itself
+  (`sampling/createMessage`), is labelled and sanitized before it is forwarded,
+  so a server cannot deliver a payload out-of-band and return an empty result.
+  A message carrying no `params` is passed through untouched, since there is
+  nothing in it to label.
 - **Output-sanitizer bypass.** An exfiltration channel (e.g. markdown image)
   that survives sanitization. This covers strings nested inside containers and
   inside typed objects (dataclasses, Pydantic models, namespaces, `__slots__`

