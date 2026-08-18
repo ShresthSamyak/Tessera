@@ -157,7 +157,11 @@ launder a payload. `session.py` handles this two ways, selected by `Strictness`:
   ledger entry. Keep it whole-object: an unknown future field is then walked by default rather than
   silently dropped, and the sanitized copy is written back wholesale so *every* text leaf is defanged.
 - **In-process** — `sdk.py` (`protect()` / `@tool` / `Guard`). Same flow rule, same ledger, applied to
-  plain callables. This is the "one line" adoption path.
+  plain callables. This is the "one line" adoption path. A refused call returns `BlockedResult` under the
+  default `on_block="error"` — a real `str` (so a tool loop hands it to the model unchanged) that is also
+  its own type, so `isinstance(v, BlockedResult)` detects a refusal without forcing exception handling,
+  and `.decision` carries the `PolicyResult` rather than making callers parse prose. Keep it a `str`
+  subclass: a plain string made a refusal and a success indistinguishable except by prefix.
 - **By construction** — `plan.py` + `planner.py`. The CaMeL-style path: a `Plan` (a tiny constrained DSL:
   `plan/step/call/const/var/field`) is emitted **once from the trusted query before any untrusted data is
   seen**, then interpreted. Two stronger guarantees: (1) **structural containment** — the tool-call set is

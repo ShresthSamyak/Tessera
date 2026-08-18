@@ -39,7 +39,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Callable, Any, Mapping
 
 
 def _hmac(key: bytes, msg: str) -> bytes:
@@ -227,6 +227,20 @@ class CapabilityEngine:
     """Mints, attenuates, and verifies capabilities against a root key."""
 
     root_key: bytes = field(default_factory=lambda: os.urandom(32))
+    #: Where ``expires_at`` reads the current time from. Defaults to the local
+    #: clock, which is the honest default and also the weak one: capabilities
+    #: exist to strip ambient authority from a host we assume is compromised,
+    #: and expiry judged by *that host's* clock is the one caveat that
+    #: assumption undermines — wind the clock back and an expired capability
+    #: works again.
+    #:
+    #: ``verify(..., now=)`` is the per-call escape hatch, but the enforcement
+    #: path does not go through a caller that can use it: ``Session`` verifies
+    #: internally, so a proxy operator had no way to supply a better time source
+    #: at all. Setting this once covers every verification, including those.
+    #: Point it at an attested or remote clock if expiry has to mean something
+    #: against a compromised host.
+    time_source: Callable[[], float] = time.time
     _uses: dict[str, int] = field(default_factory=dict)
 
     def mint(self, *caveats: Caveat, capability_id: str | None = None) -> Capability:
@@ -284,7 +298,10 @@ class CapabilityEngine:
         """
         if not self._signature_valid(cap):
             return CapabilityResult(False, "invalid signature (forged or tampered)", cap.id)
-        ctx = _VerifyContext(now=now if now is not None else time.time(), uses=self._uses.get(cap.id, 0))
+        ctx = _VerifyContext(
+            now=now if now is not None else self.time_source(),
+            uses=self._uses.get(cap.id, 0),
+        )
         for cav in cap.caveats:
             ok, reason = cav.check(tool, args, ctx)
             if not ok:
