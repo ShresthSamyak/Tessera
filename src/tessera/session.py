@@ -300,6 +300,10 @@ class Session:
     context_level: TrustLevel = TrustLevel.TRUSTED
     #: Significant tokens seen in untrusted results, for value-flow matching.
     _tainted_tokens: set[str] = field(default_factory=set)
+    #: Tokens the *user* supplied in this task's instruction (see
+    #: :meth:`trust_instruction`). Never tracked as untrusted, because a word the
+    #: user typed carries no information the attacker supplied.
+    _instruction_tokens: set[str] = field(default_factory=set)
     #: Capabilities granted to this session (the held set the proxy enforces).
     _granted: list[Capability] = field(default_factory=list)
     #: Guards every mutation of, and read over, the state above.
@@ -369,6 +373,48 @@ class Session:
         self.tool_levels[tool] = level
 
     @_synchronized
+    def trust_instruction(self, text: str) -> None:
+        """Mark the vocabulary of the user's own instruction as user-supplied.
+
+        The user says "checkout-api is degraded, roll it back". Every log line
+        the agent then reads also says ``checkout-api``, so value-flow starts
+        tracking it as untrusted — and the legitimate rollback of the service
+        *the user named* is gated as though the attacker had supplied the name.
+        The failure compounds: the more specific the instruction, the more of
+        its vocabulary the logs echo, and the more of the user's own task gets
+        blocked.
+
+        A token the user typed carries no information the attacker supplied, so
+        tokens from ``text`` are never tracked as untrusted: they are removed if
+        already tracked, and skipped on every later ingest in this task.
+
+        What this does **not** weaken: the high-value strings are exactly the
+        ones a user never types. A credential, an attacker URL, a rotated key —
+        none of them appear in the instruction, so all of them stay tracked.
+        That is why the measured cost of this is zero containment.
+
+        .. warning::
+           ``text`` must be genuinely **operator- or user-authored**. Passing
+           anything derived from an untrusted source — a ticket body, an inbound
+           email, a summary of a document the agent just read — laundershat
+           source's vocabulary into the trusted set, which is the one thing this
+           must never be used for. It is the same trust class as
+           :meth:`trust_tool`: an assertion only the integrator can make.
+
+        Scoped to the task: :meth:`begin_task` clears it, because the next unit
+        of work has a different instruction.
+        """
+        tokens = _significant_tokens(text)
+        if not tokens:
+            return
+        self._instruction_tokens |= tokens
+        # The instruction may arrive after the first read, so clear as well as
+        # pre-empt.
+        self._tainted_tokens -= tokens
+        if self.ledger:
+            self.ledger.trust_instruction(len(tokens))
+
+    @_synchronized
     def begin_task(self, description: str = "") -> None:
         """Start a new unit of work: drop accumulated taint, keep the audit trail.
 
@@ -403,6 +449,7 @@ class Session:
         level_was = self.context_level.name
         self.context_level = TrustLevel.TRUSTED
         self._tainted_tokens.clear()
+        self._instruction_tokens.clear()
         self.graph = ProvenanceGraph()
         if self.ledger:
             self.ledger.task_boundary(description, dropped, level_was)
@@ -516,7 +563,9 @@ class Session:
         # Propagate taint into the session.
         if resolved_level.is_untrusted:
             self.context_level = combine(self.context_level, resolved_level)
-            self._tainted_tokens.update(_significant_tokens(text))
+            self._tainted_tokens.update(
+                _significant_tokens(text) - self._instruction_tokens
+            )
 
         # Ledger order mirrors the logical order: first we *label* where the
         # result came from, then we record any sanitization we applied to it.

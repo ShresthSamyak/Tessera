@@ -268,6 +268,17 @@ class Ledger:
         """
         return self.record("sanitize_gap", tool=tool, objects=objects)
 
+    def trust_instruction(self, tokens: int) -> LedgerEntry:
+        """Record that the user's own vocabulary was exempted from tracking.
+
+        A deliberate reduction in what the session will treat as untrusted, so
+        it belongs in the audit trail next to the decisions it goes on to
+        affect. The token *count* is recorded rather than the tokens: the
+        instruction is the user's text, and the ledger is not the place to
+        copy it.
+        """
+        return self.record("trust_instruction", tokens=tokens)
+
     def task_boundary(
         self, description: str, dropped_tokens: int, level_was: str
     ) -> LedgerEntry:
