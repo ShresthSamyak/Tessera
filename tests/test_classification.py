@@ -95,3 +95,26 @@ def test_operator_override_marks_source():
     )
     assert p.source == "operator"
     assert not p.is_dangerous
+
+
+# --- delegation axis (findings.md #11) -------------------------------------
+
+def test_delegation_verbs_are_detected_and_imply_danger():
+    from tessera.classification import classify_tool
+
+    for name in ("delegate_to_runbook_agent", "spawn_worker",
+                 "handoff_to_specialist", "orchestrate_run", "dispatch_task"):
+        profile = classify_tool(name, {"properties": {"x": {}}})
+        assert profile.blast_radius.spawns_agents, name
+        assert profile.is_dangerous, name
+
+
+def test_reading_about_agents_is_not_delegating():
+    """A bare 'agent' token is deliberately not a delegation verb: the cost of a
+    false positive here is a hard plan-mode refusal, not just extra gating."""
+    from tessera.classification import classify_tool
+
+    for name in ("get_agent_status", "list_agents", "agent_config"):
+        assert not classify_tool(
+            name, {"properties": {"x": {}}}
+        ).blast_radius.spawns_agents, name

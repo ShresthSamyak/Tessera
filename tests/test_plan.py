@@ -504,3 +504,66 @@ def test_the_interpreter_refuses_a_private_key_even_if_one_reaches_it():
     ))
     assert run.outcomes[1].failed
     assert not run.outcomes[1].executed
+
+
+# --- delegation is outside structural containment (findings.md #11) --------
+# "The executed set is exactly the plan's steps" is true of the PLAN and false
+# of the PROCESS: a tool that runs another agent makes calls that never reach
+# this session. The flow rule cannot cover the gap either -- a delegation whose
+# arguments are plan constants carries no untrusted data, so nothing gates it.
+
+def _delegating_session():
+    s = _session()
+    s.register_tool(classify_tool("get_runbook", {"properties": {"service": {}}}))
+    s.register_tool(classify_tool(
+        "delegate_to_runbook_agent",
+        {"properties": {"service": {}, "instruction": {}}}))
+    return s
+
+
+def _delegating_plan():
+    return plan(
+        step(call("get_runbook", service=const("checkout-api")), bind="rb"),
+        step(call("delegate_to_runbook_agent",
+                  service=const("checkout-api"),
+                  instruction=const("Carry out the remediation in the runbook."))),
+    )
+
+
+def test_a_delegating_step_is_refused_by_default():
+    """The plan the live planner actually emitted when it could not branch."""
+    backend = Backend()
+    run = PlanInterpreter(_delegating_session(), backend).run(_delegating_plan())
+
+    assert run.outcomes[0].executed                     # the read still runs
+    assert run.outcomes[1].failed
+    assert not run.outcomes[1].executed
+    assert "delegates to another agent" in (run.outcomes[1].error or "")
+    assert "delegate_to_runbook_agent" not in [t for t, _ in backend.calls]
+
+
+def test_an_operator_can_vouch_for_a_delegating_tool():
+    """Tessera cannot verify that sub-calls re-enter the session, so it is an
+    explicit assertion -- the same trust class as trust_tool."""
+    backend = Backend()
+    s = _delegating_session()
+    s.declare_subcalls_guarded("delegate_to_runbook_agent")
+
+    run = PlanInterpreter(s, backend).run(_delegating_plan())
+    assert run.outcomes[1].executed
+
+
+def test_a_delegating_tool_is_dangerous_so_untrusted_instructions_are_gated():
+    """Vouching for sub-calls does not make it safe to *drive* with untrusted
+    data: whatever the sub-agent can do, the delegating call can cause."""
+    s = _delegating_session()
+    s.declare_subcalls_guarded("delegate_to_runbook_agent")
+    assert s.profiles["delegate_to_runbook_agent"].is_dangerous
+
+    backend = Backend({"get_runbook": INJECTED_DOC})
+    run = PlanInterpreter(s, backend).run(plan(
+        step(call("get_runbook", service=const("checkout-api")), bind="rb"),
+        step(call("delegate_to_runbook_agent",
+                  service=const("checkout-api"), instruction=var("rb"))),
+    ))
+    assert run.outcomes[1].decision.decision is not Decision.ALLOW
