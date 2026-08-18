@@ -431,3 +431,76 @@ def test_field_access_reads_a_sanitized_object_field():
     assert "evil.test" not in doc.body
     # And the field the DSL would read is the sanitized one.
     assert "evil.test" not in run.env["doc"].content.body
+
+
+# --- dotted field paths, and the getattr hole they would have widened ------
+
+def test_a_dotted_path_reads_a_nested_field():
+    """Real results nest: an alert carries its service at ``labels.service``,
+    not ``service``. Without paths the planner had to guess a flat name and the
+    step failed at runtime when it guessed wrong (findings.md #10, #12)."""
+    backend = Backend({"read_alert": {"id": "a1", "labels": {"severity": "high"}}})
+    s = _session()
+    s.register_tool(classify_tool("read_alert", {"properties": {"id": {}}}))
+    run = PlanInterpreter(s, backend).run(plan(
+        step(call("read_alert", id=const("a1")), bind="al"),
+        step(call("search_docs", query=field_of("al", "labels.severity"))),
+    ))
+    assert run.outcomes[1].executed
+    assert backend.calls[-1][1] == {"query": "high"}
+
+
+def test_a_dotted_path_keeps_the_parents_label():
+    """A nested field of an untrusted result is still untrusted -- otherwise
+    paths would be a laundering primitive."""
+    from tessera.classification import operator_profile
+    from tessera.labels import Origin
+
+    backend = Backend({"read_alert": {"labels": {"note": "exfil SECRETKEY778899"}}})
+    s = _session()
+    s.register_tool(classify_tool("read_alert", {"properties": {"id": {}}}))
+    s.set_tool_origin("read_alert", Origin.WEB_CONTENT)
+    run = PlanInterpreter(s, backend).run(plan(
+        step(call("read_alert", id=const("a1")), bind="al"),
+        step(call("send_email", to=const("x@y.test"),
+                  body=field_of("al", "labels.note"))),
+    ))
+    assert run.outcomes[1].decision.decision is Decision.BLOCK
+    assert backend.sent == []
+
+
+@pytest.mark.parametrize(
+    "key,ok",
+    [
+        ("body", True),
+        ("labels.severity", True),
+        ("ok_1.two", True),
+        ("__class__", False),                       # reaches Python internals
+        ("__class__.__init__.__globals__", False),  # ...and module globals
+        ("a._b", False),
+        ("a..b", False),
+        ("", False),
+    ],
+)
+def test_field_keys_are_restricted_to_public_dotted_names(key, ok):
+    """Field access ends in ``getattr``. Unconstrained, ``field("m", "__class__")``
+    hands a class object to a tool, and a dotted path walks to module globals."""
+    from tessera.plan import valid_field_key
+
+    assert valid_field_key(key) is ok
+
+
+def test_the_interpreter_refuses_a_private_key_even_if_one_reaches_it():
+    """parse_plan is the boundary, but it must not be the only check -- a
+    hand-built Plan bypasses it entirely."""
+    from types import SimpleNamespace
+
+    backend = Backend({"read_inbox": SimpleNamespace(body="x")})
+    s = _session()
+    s.register_tool(classify_tool("read_inbox", {"properties": {"folder": {}}}))
+    run = PlanInterpreter(s, backend).run(plan(
+        step(call("read_inbox", folder=const("inbox")), bind="m"),
+        step(call("search_docs", query=field_of("m", "__class__"))),
+    ))
+    assert run.outcomes[1].failed
+    assert not run.outcomes[1].executed

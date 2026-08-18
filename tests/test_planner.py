@@ -201,3 +201,27 @@ def test_claude_planner_raises_when_no_tool_call():
     client = FakeClient(_Resp(None, blocks=[]))  # model returned no emit_plan block
     with pytest.raises(PlannerError):
         ClaudePlanner(client=client).plan("do something", TOOLS)
+
+
+# --- parse_plan enforces the field-key rule too ----------------------------
+
+def test_parse_plan_refuses_a_private_field_key():
+    """The trust boundary must refuse what the interpreter also refuses."""
+    import pytest
+
+    from tessera.planner import PlannerError, parse_plan
+
+    def build(key):
+        return {"steps": [
+            {"tool": "read_doc", "bind": "d", "args": {"doc_id": {"const": "q"}}},
+            {"tool": "search_docs",
+             "args": {"query": {"field": {"var": "d", "key": key}}}},
+        ]}
+
+    allowed = {"read_doc", "search_docs"}
+    # A public dotted path is fine...
+    parse_plan(build("labels.severity"), allowed_tools=allowed)
+    # ...anything reaching internals is not.
+    for bad in ("__class__", "__class__.__init__.__globals__", "a._b"):
+        with pytest.raises(PlannerError, match="field key"):
+            parse_plan(build(bad), allowed_tools=allowed)

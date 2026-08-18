@@ -61,6 +61,7 @@ from tessera.ledger import (
     verify_ledger,
 )
 from tessera.plan import (
+    valid_field_key,
     Call,
     Const,
     Field,
