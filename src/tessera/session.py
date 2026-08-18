@@ -769,17 +769,22 @@ class Session:
 
     def _check_capability(
         self, tool: str, args: Mapping[str, Any] | Any
-    ) -> CapabilityResult:
+    ) -> tuple[CapabilityResult, Capability | None]:
         """Find a granted capability that authorizes this call (least authority).
 
-        Note the ordering consequence: this runs as gate 1, so a use is spent
-        even if gate 2 (the flow rule) then blocks the call. A finite
-        ``max_uses`` budget is therefore consumed by *attempted* dangerous
-        calls, not just executed ones — which errs closed (later calls are
-        denied, never wrongly allowed) and is the deliberate choice for now.
-        Consuming only on a final ALLOW is ambiguous for ESCALATE, where the
-        session never learns whether the human approved; that is tracked as a
-        separate decision rather than changed silently here.
+        **Verifies without spending.** The matched capability is returned to the
+        caller, which consumes it only once the flow rule has also decided — see
+        :meth:`_finalize_decision`.
+
+        Spending here, at gate 1, meant a use was burned by any *attempted*
+        dangerous call, including one the flow rule went on to block. That reads
+        as erring closed but bounds the wrong thing: a capability limits how many
+        times authority is actually *exercised*, and a blocked call exercises
+        none. It also composes badly with how agents behave — a model that
+        cannot get a call through retries, and a handful of refused attempts
+        exhausts a ``max_uses(1)`` grant before the legitimate call is ever
+        composed. Plan mode never noticed, because a plan step is attempted
+        exactly once.
         """
         engine = self.capability_engine
         assert engine is not None
@@ -788,10 +793,22 @@ class Session:
         for cap in self._granted:
             res = engine.verify(cap, tool, call_args)
             if res.authorized:
-                engine.consume(cap)  # spend exactly the capability we used
-                return res
+                return res, cap
             last_reason = res.reason
-        return CapabilityResult(False, last_reason)
+        return CapabilityResult(False, last_reason), None
+
+    def _spend_capability(self, cap: Capability | None) -> None:
+        """Spend the verified capability unless the flow rule refused outright.
+
+        ALLOW obviously spends. **ESCALATE also spends**, and that asymmetry is
+        deliberate: the session hands back a decision and never learns whether
+        the human approved, so an escalated call may well proceed. Not spending
+        would leave an approved call unbounded, which is the direction that
+        actually costs something. A flow-rule BLOCK is the unambiguous case —
+        nothing happened, so nothing is spent.
+        """
+        if self.capability_engine is not None and cap is not None:
+            self.capability_engine.consume(cap)
 
     @_synchronized
     def authorize_call(
@@ -872,8 +889,9 @@ class Session:
         """Run both gates (least authority, then flow rule) and record."""
         # Gate 1: least authority. A missing/insufficient capability is a hard
         # block — ambient authority is exactly what we are removing.
+        spendable: Capability | None = None
         if self._capability_required(profile):
-            cap_res = self._check_capability(tool, capability_args)
+            cap_res, spendable = self._check_capability(tool, capability_args)
             if self.ledger:
                 self.ledger.capability(
                     tool, cap_res.authorized, cap_res.reason, cap_res.capability_id
@@ -897,6 +915,10 @@ class Session:
         )
         if cleaned and result.decision is Decision.ALLOW:
             result = replace(result, cleaned_arguments=cleaned)
+        # Spend the capability only now that both gates have spoken. A
+        # flow-rule BLOCK exercised no authority, so it costs no budget.
+        if result.decision is not Decision.BLOCK:
+            self._spend_capability(spendable)
         if self.ledger:
             self.ledger.decision(result)
         return result

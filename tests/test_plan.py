@@ -303,12 +303,15 @@ def test_two_identical_non_idempotent_steps_both_execute():
     assert [a["body"] for a in backend.sent] == ["one", "two"]
 
 
-def test_flow_rule_block_still_spends_the_use_budget():
-    """Documented interaction, pinned so it stays a decision not an accident.
+def test_a_flow_rule_block_does_not_spend_the_use_budget():
+    """A capability bounds how often authority is *exercised* (findings.md #8).
 
-    The capability gate runs *before* the flow rule, so an attempted dangerous
-    call spends a use even when the flow rule then blocks it. That errs closed
-    (a later call is denied, never wrongly allowed).
+    The gate used to consume before the flow rule ran, so a refused call still
+    burned a use. That reads as erring closed but bounds the wrong thing: a
+    blocked call exercises no authority. It also composed badly with how agents
+    behave — a model that cannot get a call through retries, and a few refused
+    attempts exhausted a ``max_uses(1)`` grant before the legitimate call was
+    ever composed.
     """
     s = _cap_session()
     backend = Backend({"read_doc": INJECTED_DOC})
@@ -319,10 +322,14 @@ def test_flow_rule_block_still_spends_the_use_budget():
     assert not run.outcomes[1].executed  # blocked by the flow rule, not the cap
     assert backend.sent == []
 
-    # The budget was spent by the attempt, so a later clean send is denied too.
+    # The budget survived the refusal, so the legitimate send still goes through.
     later = s.authorize_call("send_email", {"to": "bob@co.test", "body": "clean"})
-    assert later.decision is Decision.BLOCK
-    assert "1/1" in later.reason
+    assert later.decision is Decision.ALLOW
+
+    # ...and it is genuinely max_uses(1): the *next* one is out of budget.
+    again = s.authorize_call("send_email", {"to": "bob@co.test", "body": "clean"})
+    assert again.decision is Decision.BLOCK
+    assert "1/1" in again.reason
 
 
 def test_use_cap_does_not_gate_a_safe_tool():

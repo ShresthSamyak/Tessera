@@ -78,7 +78,13 @@ in scope:
   (`sampling/createMessage`), is labelled and sanitized before it is forwarded,
   so a server cannot deliver a payload out-of-band and return an empty result.
   A message carrying no `params` is passed through untouched, since there is
-  nothing in it to label.
+  nothing in it to label. A tool's **failure** result is labelled on the same
+  footing as its success value, in every integration -- errors are free-form by
+  construction and routinely echo their input. Documented limit: `protect()`
+  taints from a raised exception's message but re-raises it unchanged, because
+  substituting the exception would change the type callers catch, so an exfil
+  channel inside an exception's *text* is not defanged the way a returned
+  value's is.
 - **Output-sanitizer bypass.** An exfiltration channel (e.g. markdown image)
   that survives sanitization. This covers strings nested inside containers and
   inside typed objects (dataclasses, Pydantic models, namespaces, `__slots__`
