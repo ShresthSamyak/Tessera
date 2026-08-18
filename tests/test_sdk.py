@@ -229,16 +229,15 @@ def test_wrapped_tool_returning_an_object_gets_it_sanitized():
 
 def test_a_raising_tool_still_taints_from_its_error_text():
     """A tool error echoes its input and reaches the agent; it must be tracked."""
-    from tessera.classification import Reversibility
     from tessera.policy import Decision, PolicyEngine, Strictness
     from tessera.sdk import Guard, tool
     from tessera.session import Session
 
-    @tool(reversibility=Reversibility.REVERSIBLE, exfiltration_capable=False)
+    @tool(reversibility="reversible", exfiltration_capable=False)
     def lookup_user(query: str) -> str:
         raise ValueError(f"no such user: {query} SENTINEL-Zx9-4471")
 
-    @tool(reversibility=Reversibility.IRREVERSIBLE, exfiltration_capable=True)
+    @tool(reversibility="irreversible", exfiltration_capable=True)
     def send_email(to: str, body: str) -> str:
         return "sent"
 
